@@ -375,3 +375,56 @@ async fn quotation_open_notifies_active_suppliers_and_redacts_for_suppliers() {
         .unwrap();
     assert_eq!(denied.status(), 403);
 }
+
+#[tokio::test]
+async fn lazy_close_audits_exactly_once_and_open_is_single_shot() {
+    let app = spawn_app().await;
+    common::create_staff(&app.pool, "servidor@tjrr.jus.br").await;
+    let staff_token = common::login(&app, "servidor@tjrr.jus.br").await;
+    common::create_supplier(&app.pool, "11222333000181", "a@example.com", "ACTIVE", "Voa Roraima").await;
+    let id = common::create_open_quotation(&app, &staff_token).await;
+    common::time_travel_past_close(&app.pool, &id).await;
+
+    let url = format!("{}/quotations/{id}", app.base);
+    let (r1, r2, r3) = tokio::join!(
+        app.client.get(&url).bearer_auth(&staff_token).send(),
+        app.client.get(&url).bearer_auth(&staff_token).send(),
+        app.client.get(&url).bearer_auth(&staff_token).send(),
+    );
+    for r in [r1.unwrap(), r2.unwrap(), r3.unwrap()] {
+        assert_eq!(r.status(), 200);
+    }
+    let closed_events: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM audit_events WHERE event_type = 'QUOTATION_CLOSED'",
+    )
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(closed_events, 1, "exactly one close event under concurrent reads");
+    let status: String = sqlx::query_scalar("SELECT status FROM quotations WHERE id = $1")
+        .bind(uuid::Uuid::parse_str(&id).unwrap())
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "CLOSED");
+
+    // open() is single-shot: reopening a non-DRAFT loses with 422
+    let reopen = app
+        .client
+        .post(format!("{}/quotations/{id}/open", app.base))
+        .bearer_auth(&staff_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(reopen.status(), 422);
+
+    // supplier-facing copy is Boa Vista local, never raw UTC
+    let msg: String = sqlx::query_scalar(
+        "SELECT message FROM notifications WHERE kind = 'COTACAO_ABERTA' LIMIT 1",
+    )
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert!(msg.contains("horário de Boa Vista"), "must state the timezone: {msg}");
+    assert!(!msg.contains("+00:00"), "no raw UTC in supplier copy: {msg}");
+}

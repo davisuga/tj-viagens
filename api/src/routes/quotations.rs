@@ -8,8 +8,9 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::audit::{append_audit, AuditInput};
+use crate::audit::{append_audit, append_audit_tx, AuditInput};
 use crate::auth::{AuthUser, Claims, Staff};
+use crate::domain::timefmt::fmt_boa_vista;
 use crate::domain::types::{QuotationStatus, Role, SupplierStatus};
 use crate::error::{ApiError, ApiResult};
 use crate::sse::publish;
@@ -55,21 +56,24 @@ pub async fn load_quotation(
     if q.status == "OPEN"
         && effective_status(&q.status, q.closes_at, now) == QuotationStatus::Closed
     {
-        sqlx::query("UPDATE quotations SET status = 'CLOSED' WHERE id = $1")
-            .bind(id)
-            .execute(&state.pool)
+        let updated =
+            sqlx::query("UPDATE quotations SET status = 'CLOSED' WHERE id = $1 AND status = 'OPEN'")
+                .bind(id)
+                .execute(&state.pool)
+                .await?;
+        if updated.rows_affected() == 1 {
+            append_audit(&state.pool, AuditInput {
+                actor_id: None,
+                actor_role: None,
+                event_type: "QUOTATION_CLOSED",
+                entity: "Quotation",
+                entity_id: id.to_string(),
+                quotation_id: Some(id),
+                payload: json!({ "closesAt": q.closes_at.map(|d| d.to_rfc3339()) }),
+            })
             .await?;
-        append_audit(&state.pool, AuditInput {
-            actor_id: None,
-            actor_role: None,
-            event_type: "QUOTATION_CLOSED",
-            entity: "Quotation",
-            entity_id: id.to_string(),
-            quotation_id: Some(id),
-            payload: json!({ "closesAt": q.closes_at.map(|d| d.to_rfc3339()) }),
-        })
-        .await?;
-        publish(state, id, "status", json!({ "status": "CLOSED" }));
+            publish(state, id, "status", json!({ "status": "CLOSED" }));
+        }
         return fetch_quotation(&state.pool, id).await;
     }
     Ok(Some(q))
@@ -172,36 +176,46 @@ async fn open(
     let Some(q) = fetch_quotation(&state.pool, id).await? else {
         return Err(ApiError::NotFound("NAO_ENCONTRADA"));
     };
-    if q.status != "DRAFT" {
-        return Err(ApiError::Unprocessable("NAO_ESTA_EM_RASCUNHO"));
-    }
     let now = Utc::now();
     let closes_at = now + Duration::minutes(state.config.proposal_window_minutes);
-    sqlx::query("UPDATE quotations SET status = 'OPEN', opens_at = $1, closes_at = $2 WHERE id = $3")
-        .bind(now).bind(closes_at).bind(id)
-        .execute(&state.pool)
-        .await?;
-    // R3: simultaneous notification of every ACTIVE supplier. Message NEVER contains the reference price.
+    // Status flip + notifications + audit commit ATOMICALLY; the guarded UPDATE
+    // makes a double-submit lose with 422 instead of double-notifying.
+    let mut tx = state.pool.begin().await?;
+    let updated = sqlx::query(
+        "UPDATE quotations SET status = 'OPEN', opens_at = $1, closes_at = $2 \
+         WHERE id = $3 AND status = 'DRAFT'",
+    )
+    .bind(now).bind(closes_at).bind(id)
+    .execute(&mut *tx)
+    .await?;
+    if updated.rows_affected() == 0 {
+        return Err(ApiError::Unprocessable("NAO_ESTA_EM_RASCUNHO"));
+    }
+    // R3: simultaneous notification of every ACTIVE supplier. Copy is Boa Vista
+    // local (UX rule: a supplier misreading UTC is the worst possible failure).
+    // Never contains the reference price.
     let active: Vec<(Uuid, String)> =
         sqlx::query_as("SELECT id, contact_email FROM suppliers WHERE status = 'ACTIVE'")
-            .fetch_all(&state.pool)
+            .fetch_all(&mut *tx)
             .await?;
     let message = format!(
-        "Nova cotação {}: {} → {}, embarque {}. Propostas até {}.",
-        q.code, q.origin, q.destination, q.departure_at.to_rfc3339(), closes_at.to_rfc3339()
+        "Nova cotação {}: {} → {}, embarque {}. Propostas até {} (horário de Boa Vista).",
+        q.code,
+        q.origin,
+        q.destination,
+        fmt_boa_vista(q.departure_at),
+        fmt_boa_vista(closes_at)
     );
-    for (supplier_id, email) in &active {
+    for (supplier_id, _email) in &active {
         sqlx::query(
             "INSERT INTO notifications (id, supplier_id, quotation_id, kind, message) \
              VALUES ($1,$2,$3,'COTACAO_ABERTA',$4)",
         )
         .bind(Uuid::new_v4()).bind(supplier_id).bind(id).bind(&message)
-        .execute(&state.pool)
+        .execute(&mut *tx)
         .await?;
-        // Console mail adapter — swap for institutional SMTP without touching callers.
-        println!("[mail] to={email} subject=\"Cotação {} aberta\"", q.code);
     }
-    append_audit(&state.pool, AuditInput {
+    append_audit_tx(&mut tx, AuditInput {
         actor_id: Some(claims.sub),
         actor_role: Some(claims.role.as_str()),
         event_type: "QUOTATION_OPENED",
@@ -215,6 +229,12 @@ async fn open(
         }),
     })
     .await?;
+    tx.commit().await?;
+    // Side effects only after the durable commit.
+    for (_supplier_id, email) in &active {
+        // Console mail adapter — swap for institutional SMTP without touching callers.
+        println!("[mail] to={email} subject=\"Cotação {} aberta\"", q.code);
+    }
     publish(&state, id, "status", json!({ "status": "OPEN", "closesAt": closes_at.to_rfc3339() }));
     let q = fetch_quotation(&state.pool, id)
         .await?
