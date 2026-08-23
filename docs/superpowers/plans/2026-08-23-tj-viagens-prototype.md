@@ -2309,6 +2309,9 @@ git commit -m "feat(api): supplier registration, doc upload, checklist pre-triag
 
 ### Task 6: Quotations — create, open+notify, redacted views, SSE broker
 
+> **As built (execution record — commits `6bf635c` + `c40a84e`; supersedes the blocks below where they differ):**
+> `open()` is atomic and single-shot: guarded `UPDATE … AND status='DRAFT'` (0 rows → 422), notifications + `append_audit_tx` in the SAME tx, mail println + SSE publish only after commit. Notification copy uses the new `domain::timefmt::fmt_boa_vista` (dd/mm/YYYY HH:mm, "horário de Boa Vista") — never raw UTC. `load_quotation`'s lazy close guards `AND status='OPEN'` and audits/publishes only when `rows_affected()==1` (concurrent readers produce exactly one QUOTATION_CLOSED row). New test `lazy_close_audits_exactly_once_and_open_is_single_shot`.
+
 **Files:**
 - Fill: `api/src/sse.rs` (broker; HTTP route comes in Task 11), `api/src/routes/views.rs`
 - Replace: `api/src/routes/quotations.rs`
