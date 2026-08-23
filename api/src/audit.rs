@@ -21,6 +21,35 @@ pub fn event_hash(prev_hash: &str, core: &Value) -> String {
     hex::encode(hasher.finalize())
 }
 
+/// jsonb round-trips do not preserve float formatting — a float in a payload
+/// could make an untampered row verify as broken. Reject at append time.
+fn assert_integer_payload(value: &Value) -> ApiResult<()> {
+    match value {
+        Value::Null | Value::Bool(_) | Value::String(_) => Ok(()),
+        Value::Number(n) => {
+            if n.is_i64() || n.is_u64() {
+                Ok(())
+            } else {
+                Err(crate::error::ApiError::Internal(
+                    "audit payload must not contain floats".to_string(),
+                ))
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                assert_integer_payload(item)?;
+            }
+            Ok(())
+        }
+        Value::Object(map) => {
+            for item in map.values() {
+                assert_integer_payload(item)?;
+            }
+            Ok(())
+        }
+    }
+}
+
 pub struct AuditInput<'a> {
     pub actor_id: Option<Uuid>,
     pub actor_role: Option<&'a str>,
@@ -44,13 +73,19 @@ fn core_value(at: &str, input: &AuditInput) -> Value {
     })
 }
 
-/// Append-only, serialized by a pg advisory lock so the chain never forks.
-pub async fn append_audit(pool: &PgPool, input: AuditInput<'_>) -> ApiResult<()> {
-    let mut tx = pool.begin().await?;
-    sqlx::query("SELECT pg_advisory_xact_lock(4242)").execute(&mut *tx).await?;
+/// Appends inside the caller's transaction — use this to commit the audit entry
+/// atomically with the business write it documents. Takes the global advisory
+/// lock, so hold the transaction briefly.
+pub async fn append_audit_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    input: AuditInput<'_>,
+) -> ApiResult<()> {
+    assert_integer_payload(&input.payload)?;
+    sqlx::query("SET LOCAL lock_timeout = '5s'").execute(&mut **tx).await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(4242)").execute(&mut **tx).await?;
     let prev_hash: String =
         sqlx::query_scalar("SELECT hash FROM audit_events ORDER BY seq DESC LIMIT 1")
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await?
             .unwrap_or_else(|| GENESIS_HASH.to_string());
     let at = Utc::now().to_rfc3339();
@@ -71,8 +106,17 @@ pub async fn append_audit(pool: &PgPool, input: AuditInput<'_>) -> ApiResult<()>
     .bind(&input.payload)
     .bind(&prev_hash)
     .bind(&hash)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
+    Ok(())
+}
+
+/// Standalone append (own transaction). Best-effort relative to any business
+/// write that already committed — prefer append_audit_tx on hot paths where the
+/// audit entry must be atomic with the write it documents.
+pub async fn append_audit(pool: &PgPool, input: AuditInput<'_>) -> ApiResult<()> {
+    let mut tx = pool.begin().await?;
+    append_audit_tx(&mut tx, input).await?;
     tx.commit().await?;
     Ok(())
 }

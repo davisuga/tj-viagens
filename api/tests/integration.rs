@@ -74,7 +74,7 @@ async fn audit_chain_appends_verifies_and_detects_tampering() {
                 entity: "X",
                 entity_id: n.to_string(),
                 quotation_id: None,
-                payload: json!({ "n": n }),
+                payload: json!({ "zeta": n, "flightInfo": "G3-1720 08:15 éão", "alpha": true, "note": null }),
             },
         )
         .await
@@ -92,6 +92,22 @@ async fn audit_chain_appends_verifies_and_detects_tampering() {
         .await
         .unwrap();
     assert_eq!(ok, json!({ "ok": true, "count": 2 }));
+
+    // float payloads are rejected before they can poison the chain
+    let float_err = append_audit(
+        &app.pool,
+        AuditInput {
+            actor_id: None,
+            actor_role: None,
+            event_type: "BAD",
+            entity: "X",
+            entity_id: "f".to_string(),
+            quotation_id: None,
+            payload: json!({ "pct": 17.68 }),
+        },
+    )
+    .await;
+    assert!(float_err.is_err(), "float payload must be rejected");
 
     sqlx::query("UPDATE audit_events SET payload = '{\"n\": 999}'::jsonb WHERE seq = 2")
         .execute(&app.pool)
