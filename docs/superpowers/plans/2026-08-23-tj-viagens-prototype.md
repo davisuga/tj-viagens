@@ -1527,13 +1527,48 @@ fn core_value(at: &str, input: &AuditInput) -> Value {
     })
 }
 
-/// Append-only, serialized by a pg advisory lock so the chain never forks.
-pub async fn append_audit(pool: &PgPool, input: AuditInput<'_>) -> ApiResult<()> {
-    let mut tx = pool.begin().await?;
-    sqlx::query("SELECT pg_advisory_xact_lock(4242)").execute(&mut *tx).await?;
+/// jsonb round-trips do not preserve float formatting — a float in a payload
+/// could make an untampered row verify as broken. Reject at append time.
+fn assert_integer_payload(value: &Value) -> ApiResult<()> {
+    match value {
+        Value::Null | Value::Bool(_) | Value::String(_) => Ok(()),
+        Value::Number(n) => {
+            if n.is_i64() || n.is_u64() {
+                Ok(())
+            } else {
+                Err(crate::error::ApiError::Internal(
+                    "audit payload must not contain floats".to_string(),
+                ))
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                assert_integer_payload(item)?;
+            }
+            Ok(())
+        }
+        Value::Object(map) => {
+            for item in map.values() {
+                assert_integer_payload(item)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Appends inside the caller's transaction — use this to commit the audit entry
+/// atomically with the business write it documents. Takes the global advisory
+/// lock, so hold the transaction briefly.
+pub async fn append_audit_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    input: AuditInput<'_>,
+) -> ApiResult<()> {
+    assert_integer_payload(&input.payload)?;
+    sqlx::query("SET LOCAL lock_timeout = '5s'").execute(&mut **tx).await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(4242)").execute(&mut **tx).await?;
     let prev_hash: String =
         sqlx::query_scalar("SELECT hash FROM audit_events ORDER BY seq DESC LIMIT 1")
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await?
             .unwrap_or_else(|| GENESIS_HASH.to_string());
     let at = Utc::now().to_rfc3339();
@@ -1554,8 +1589,17 @@ pub async fn append_audit(pool: &PgPool, input: AuditInput<'_>) -> ApiResult<()>
     .bind(&input.payload)
     .bind(&prev_hash)
     .bind(&hash)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
+    Ok(())
+}
+
+/// Standalone append (own transaction). Best-effort relative to any business
+/// write that already committed — prefer append_audit_tx on hot paths where the
+/// audit entry must be atomic with the write it documents.
+pub async fn append_audit(pool: &PgPool, input: AuditInput<'_>) -> ApiResult<()> {
+    let mut tx = pool.begin().await?;
+    append_audit_tx(&mut tx, input).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -1687,7 +1731,7 @@ async fn audit_chain_appends_verifies_and_detects_tampering() {
                 entity: "X",
                 entity_id: n.to_string(),
                 quotation_id: None,
-                payload: json!({ "n": n }),
+                payload: json!({ "zeta": n, "flightInfo": "G3-1720 08:15 éão", "alpha": true, "note": null }),
             },
         )
         .await
@@ -1705,6 +1749,22 @@ async fn audit_chain_appends_verifies_and_detects_tampering() {
         .await
         .unwrap();
     assert_eq!(ok, json!({ "ok": true, "count": 2 }));
+
+    // float payloads are rejected before they can poison the chain
+    let float_err = append_audit(
+        &app.pool,
+        AuditInput {
+            actor_id: None,
+            actor_role: None,
+            event_type: "BAD",
+            entity: "X",
+            entity_id: "f".to_string(),
+            quotation_id: None,
+            payload: json!({ "pct": 17.68 }),
+        },
+    )
+    .await;
+    assert!(float_err.is_err(), "float payload must be rejected");
 
     sqlx::query("UPDATE audit_events SET payload = '{\"n\": 999}'::jsonb WHERE seq = 2")
         .execute(&app.pool)
@@ -2868,7 +2928,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::audit::{append_audit, AuditInput};
+use crate::audit::{append_audit_tx, AuditInput};
 use crate::auth::AuthUser;
 use crate::domain::types::QuotationStatus;
 use crate::error::{ApiError, ApiResult};
@@ -2912,6 +2972,8 @@ async fn submit(
         | QuotationStatus::Completed => return Err(ApiError::Unprocessable("COTACAO_FECHADA")),
     }
     // Replace-while-open semantics: one row per supplier, first submitted_at preserved.
+    // Bid + audit entry commit ATOMICALLY — a bid can never exist without its trail row.
+    let mut tx = state.pool.begin().await?;
     let (proposal_id, submitted_at): (Uuid, DateTime<Utc>) = sqlx::query_as(
         "INSERT INTO proposals (id, quotation_id, supplier_id, total_price_cents, flight_info, notes) \
          VALUES ($1,$2,$3,$4,$5,$6) \
@@ -2924,9 +2986,9 @@ async fn submit(
     )
     .bind(Uuid::new_v4()).bind(id).bind(supplier_id)
     .bind(body.total_price_cents).bind(&body.flight_info).bind(&body.notes)
-    .fetch_one(&state.pool)
+    .fetch_one(&mut *tx)
     .await?;
-    append_audit(&state.pool, AuditInput {
+    append_audit_tx(&mut tx, AuditInput {
         actor_id: Some(claims.sub),
         actor_role: Some(claims.role.as_str()),
         event_type: "PROPOSAL_SUBMITTED",
@@ -2936,6 +2998,7 @@ async fn submit(
         payload: json!({ "totalPriceCents": body.total_price_cents, "flightInfo": body.flight_info }),
     })
     .await?;
+    tx.commit().await?;
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM proposals WHERE quotation_id = $1")
         .bind(id)
         .fetch_one(&state.pool)
