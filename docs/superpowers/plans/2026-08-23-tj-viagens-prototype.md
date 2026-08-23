@@ -1814,6 +1814,9 @@ git commit -m "feat(api): append-only audit trail with sha256 chaining, verify e
 - Replace: `api/src/routes/suppliers.rs`
 - Modify: `api/tests/common/mod.rs`, `api/tests/integration.rs`
 
+> **As built (execution record — commits `9a7163e` + `c00f515`; supersedes the code blocks below where they differ):**
+> `register` wraps both INSERTs in one tx and maps pg unique violations → 409 `JA_CADASTRADO` (closes the SELECT-then-INSERT race); password bounds are `chars().count() >= 8` and `len() <= 256` (`SENHA_LONGA`); `decide()` is atomic and single-shot (`SELECT … FOR UPDATE`, `UPDATE … AND status='PENDING'`, `append_audit_tx` + notification in the same tx — a double-click loses with 422 and exactly one audit row); `save_upload` keeps only `Path::file_name()` of the untrusted client filename; `my_notifications` uses a `NotificationRow` FromRow struct (clippy type_complexity). Integration adds: duplicate registration → 409, final `/audit/verify` ok, and `supplier_decision_is_atomic_and_single_shot` (concurrent decisions + traversal-filename neutralization).
+
 - [ ] **Step 1: Implement `api/src/uploads.rs`**
 
 ```rust
