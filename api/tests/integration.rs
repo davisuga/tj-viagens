@@ -311,3 +311,67 @@ async fn supplier_decision_is_atomic_and_single_shot() {
     assert!(!stored.contains(".."), "stored path must not contain traversal: {stored}");
     assert!(stored.ends_with("-evil.pdf"), "only the basename survives: {stored}");
 }
+
+#[tokio::test]
+async fn quotation_open_notifies_active_suppliers_and_redacts_for_suppliers() {
+    let app = spawn_app().await;
+    common::create_staff(&app.pool, "servidor@tjrr.jus.br").await;
+    let staff_token = common::login(&app, "servidor@tjrr.jus.br").await;
+    common::create_supplier(&app.pool, "11222333000181", "a@example.com", "ACTIVE", "Voa Roraima").await;
+    common::create_supplier(&app.pool, "11444777000161", "b@example.com", "ACTIVE", "Amazônia Viagens").await;
+    common::create_supplier(&app.pool, "12345678000195", "p@example.com", "PENDING", "Pendente Tur").await;
+
+    let id = common::create_open_quotation(&app, &staff_token).await;
+
+    // only the 2 ACTIVE suppliers were notified (R3)
+    let notified: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM notifications WHERE kind = 'COTACAO_ABERTA'")
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    assert_eq!(notified, 2);
+
+    // staff view: reference price + passenger + proposal count
+    let staff_json: serde_json::Value = app
+        .client
+        .get(format!("{}/quotations/{id}", app.base))
+        .bearer_auth(&staff_token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(staff_json["code"], "COT-2026-0001");
+    assert_eq!(staff_json["referencePriceCents"], 185000);
+    assert_eq!(staff_json["proposals"], json!({ "count": 0 }));
+
+    // supplier view: NO reference price, NO passenger PII, NO rival proposals (R2/R5)
+    let supplier_token = common::login(&app, "a@example.com").await;
+    let raw = app
+        .client
+        .get(format!("{}/quotations/{id}", app.base))
+        .bearer_auth(&supplier_token)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(!raw.contains("185000"), "reference price leaked: {raw}");
+    assert!(!raw.contains("Maria"), "passenger PII leaked: {raw}");
+    assert!(!raw.contains("referencePriceCents"));
+    let supplier_json: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(supplier_json["myProposal"], serde_json::Value::Null);
+
+    // PENDING supplier is blocked entirely
+    let pending_token = common::login(&app, "p@example.com").await;
+    let denied = app
+        .client
+        .get(format!("{}/quotations/{id}", app.base))
+        .bearer_auth(&pending_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), 403);
+}

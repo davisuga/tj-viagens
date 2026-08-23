@@ -153,3 +153,49 @@ pub async fn register_with_docs(app: &TestApp, cnpj: &str, email: &str, name: &s
     }
     supplier_id
 }
+
+pub fn quotation_payload() -> serde_json::Value {
+    serde_json::json!({
+        "passengerName": "Maria da Silva",
+        "passengerCpf": "123.456.789-09",
+        "passengerSex": "F",
+        "passengerBirth": "1985-04-12",
+        "origin": "BVB",
+        "destination": "BSB",
+        "departureAt": "2026-09-10T08:00:00Z",
+        "referenceFlight": "LA-4001",
+        "referencePriceCents": 185000
+    })
+}
+
+pub async fn create_open_quotation(app: &TestApp, staff_token: &str) -> String {
+    let created: serde_json::Value = app
+        .client
+        .post(format!("{}/quotations", app.base))
+        .bearer_auth(staff_token)
+        .json(&quotation_payload())
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let id = created["id"].as_str().unwrap().to_string();
+    let opened = app
+        .client
+        .post(format!("{}/quotations/{id}/open", app.base))
+        .bearer_auth(staff_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(opened.status(), 200, "open failed");
+    id
+}
+
+pub async fn time_travel_past_close(pool: &PgPool, quotation_id: &str) {
+    sqlx::query("UPDATE quotations SET closes_at = now() - interval '1 second' WHERE id = $1")
+        .bind(uuid::Uuid::parse_str(quotation_id).unwrap())
+        .execute(pool)
+        .await
+        .unwrap();
+}
