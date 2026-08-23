@@ -3,9 +3,10 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::sync::OnceLock;
 use uuid::Uuid;
 
-use crate::auth::{sign_token, verify_password, AuthUser};
+use crate::auth::{hash_password, sign_token, verify_password, AuthUser};
 use crate::domain::types::Role;
 use crate::error::{ApiError, ApiResult};
 use crate::App;
@@ -25,6 +26,13 @@ struct UserRow {
     supplier_id: Option<Uuid>,
 }
 
+/// Verified against on the unknown-email path so both failure branches pay the
+/// same argon2 cost (prevents account/email enumeration by timing).
+fn dummy_hash() -> &'static str {
+    static DUMMY: OnceLock<String> = OnceLock::new();
+    DUMMY.get_or_init(|| hash_password("dummy-timing-equalizer"))
+}
+
 async fn login(State(state): State<App>, Json(body): Json<LoginBody>) -> ApiResult<Json<Value>> {
     let user = sqlx::query_as::<_, UserRow>(
         "SELECT id, name, password_hash, role, supplier_id FROM users WHERE email = $1",
@@ -32,7 +40,10 @@ async fn login(State(state): State<App>, Json(body): Json<LoginBody>) -> ApiResu
     .bind(&body.email)
     .fetch_optional(&state.pool)
     .await?;
-    let Some(user) = user else { return Err(ApiError::Unauthorized) };
+    let Some(user) = user else {
+        let _ = verify_password(dummy_hash(), &body.password);
+        return Err(ApiError::Unauthorized);
+    };
     if !verify_password(&user.password_hash, &body.password) {
         return Err(ApiError::Unauthorized);
     }
