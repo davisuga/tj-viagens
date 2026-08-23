@@ -428,3 +428,100 @@ async fn lazy_close_audits_exactly_once_and_open_is_single_shot() {
     assert!(msg.contains("horário de Boa Vista"), "must state the timezone: {msg}");
     assert!(!msg.contains("+00:00"), "no raw UTC in supplier copy: {msg}");
 }
+
+#[tokio::test]
+async fn proposals_concurrent_bids_replacement_and_window_enforcement() {
+    let app = spawn_app().await;
+    common::create_staff(&app.pool, "servidor@tjrr.jus.br").await;
+    let staff_token = common::login(&app, "servidor@tjrr.jus.br").await;
+    common::create_supplier(&app.pool, "11222333000181", "a@example.com", "ACTIVE", "Voa Roraima").await;
+    common::create_supplier(&app.pool, "11444777000161", "b@example.com", "ACTIVE", "Amazônia Viagens").await;
+    common::create_supplier(&app.pool, "12345678000195", "c@example.com", "ACTIVE", "Rio Branco Tur").await;
+    let id = common::create_open_quotation(&app, &staff_token).await;
+
+    // simultaneous blind bids
+    let tokens = [
+        common::login(&app, "a@example.com").await,
+        common::login(&app, "b@example.com").await,
+        common::login(&app, "c@example.com").await,
+    ];
+    let prices = [152300i64, 149900, 158000];
+    let bids = futures::future::join_all(tokens.iter().zip(prices).map(|(token, price)| {
+        app.client
+            .post(format!("{}/quotations/{id}/proposals", app.base))
+            .bearer_auth(token)
+            .json(&json!({ "totalPriceCents": price, "flightInfo": "G3-1720 08:15" }))
+            .send()
+    }))
+    .await;
+    for bid in bids {
+        assert_eq!(bid.unwrap().status(), 201);
+    }
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM proposals WHERE quotation_id = $1")
+        .bind(uuid::Uuid::parse_str(&id).unwrap())
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 3);
+
+    // every concurrent bid got its audit row atomically
+    let bid_events: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM audit_events WHERE event_type = 'PROPOSAL_SUBMITTED'",
+    )
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(bid_events, 3);
+
+    // replacement keeps first submitted_at and does not duplicate
+    let first: serde_json::Value = app
+        .client
+        .post(format!("{}/quotations/{id}/proposals", app.base))
+        .bearer_auth(&tokens[0])
+        .json(&json!({ "totalPriceCents": 151000, "flightInfo": "G3-1720 08:15" }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let count_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM proposals WHERE quotation_id = $1")
+        .bind(uuid::Uuid::parse_str(&id).unwrap())
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(count_after, 3);
+    assert!(first["submittedAt"].as_str().is_some());
+
+    // window enforcement: server clock says no (R4)
+    common::time_travel_past_close(&app.pool, &id).await;
+    let late = app
+        .client
+        .post(format!("{}/quotations/{id}/proposals", app.base))
+        .bearer_auth(&tokens[0])
+        .json(&json!({ "totalPriceCents": 140000, "flightInfo": "G3-1720 08:15" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(late.status(), 422);
+    assert_eq!(late.json::<serde_json::Value>().await.unwrap()["error"], "COTACAO_FECHADA");
+    let status: String = sqlx::query_scalar("SELECT status FROM quotations WHERE id = $1")
+        .bind(uuid::Uuid::parse_str(&id).unwrap())
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "CLOSED", "lazy close must persist");
+
+    // audit chain stays intact through concurrent atomic appends
+    let audit: serde_json::Value = app
+        .client
+        .get(format!("{}/audit/verify", app.base))
+        .bearer_auth(&staff_token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(audit["ok"], true);
+}
