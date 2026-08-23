@@ -50,3 +50,68 @@ pub async fn spawn_app() -> TestApp {
         client: reqwest::Client::new(),
     }
 }
+
+use tj_viagens_api::auth::hash_password;
+use uuid::Uuid;
+
+pub async fn create_staff(pool: &PgPool, email: &str) -> Uuid {
+    let id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO users (id, email, name, password_hash, role) \
+         VALUES ($1, $2, 'Servidor SGA', $3, 'SERVIDOR')",
+    )
+    .bind(id)
+    .bind(email)
+    .bind(hash_password("demo1234"))
+    .execute(pool)
+    .await
+    .unwrap();
+    id
+}
+
+pub async fn create_supplier(
+    pool: &PgPool,
+    cnpj: &str,
+    email: &str,
+    status: &str,
+    legal_name: &str,
+) -> Uuid {
+    let id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO suppliers (id, cnpj, legal_name, contact_email, status) \
+         VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(id)
+    .bind(cnpj)
+    .bind(legal_name)
+    .bind(email)
+    .bind(status)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO users (id, email, name, password_hash, role, supplier_id) \
+         VALUES ($1, $2, 'Titular', $3, 'FORNECEDOR', $4)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(email)
+    .bind(hash_password("demo1234"))
+    .bind(id)
+    .execute(pool)
+    .await
+    .unwrap();
+    id
+}
+
+pub async fn login(app: &TestApp, email: &str) -> String {
+    let res = app
+        .client
+        .post(format!("{}/auth/login", app.base))
+        .json(&serde_json::json!({ "email": email, "password": "demo1234" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200, "login failed for {email}");
+    let body: serde_json::Value = res.json().await.unwrap();
+    body["token"].as_str().unwrap().to_string()
+}
