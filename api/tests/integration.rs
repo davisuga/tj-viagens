@@ -258,3 +258,56 @@ async fn credenciamento_register_docs_checklist_and_homologation() {
         .unwrap();
     assert_eq!(audit["ok"], true);
 }
+
+#[tokio::test]
+async fn supplier_decision_is_atomic_and_single_shot() {
+    let app = spawn_app().await;
+    common::create_staff(&app.pool, "servidor@tjrr.jus.br").await;
+    let staff_token = common::login(&app, "servidor@tjrr.jus.br").await;
+    let supplier_id =
+        common::register_with_docs(&app, "11.222.333/0001-81", "atomic@example.com", "Atomic Tur").await;
+
+    let url = format!("{}/suppliers/{supplier_id}/decision", app.base);
+    let (r1, r2) = tokio::join!(
+        app.client.post(&url).bearer_auth(&staff_token).json(&json!({ "decision": "APPROVE" })).send(),
+        app.client.post(&url).bearer_auth(&staff_token).json(&json!({ "decision": "APPROVE" })).send(),
+    );
+    let mut statuses = [r1.unwrap().status().as_u16(), r2.unwrap().status().as_u16()];
+    statuses.sort_unstable();
+    assert_eq!(statuses, [200, 422], "exactly one decision must win");
+
+    let decision_events: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM audit_events WHERE event_type IN ('SUPPLIER_APPROVED','SUPPLIER_REJECTED')",
+    )
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(decision_events, 1, "exactly one audit row for the decision");
+
+    // traversal-ish filename is neutralized by save_upload
+    let token = common::login(&app, "atomic@example.com").await;
+    let form = reqwest::multipart::Form::new()
+        .text("type", "CND_FEDERAL")
+        .text("validUntil", "2027-12-31")
+        .part(
+            "file",
+            reqwest::multipart::Part::bytes(b"%PDF-1.4 fake".to_vec()).file_name("../../evil.pdf"),
+        );
+    let up = app
+        .client
+        .post(format!("{}/suppliers/me/documents", app.base))
+        .bearer_auth(&token)
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(up.status(), 201);
+    let stored: String = sqlx::query_scalar(
+        "SELECT file_path FROM supplier_documents ORDER BY uploaded_at DESC LIMIT 1",
+    )
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert!(!stored.contains(".."), "stored path must not contain traversal: {stored}");
+    assert!(stored.ends_with("-evil.pdf"), "only the basename survives: {stored}");
+}

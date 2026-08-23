@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::audit::{append_audit, AuditInput};
+use crate::audit::{append_audit, append_audit_tx, AuditInput};
 use crate::auth::{hash_password, AuthUser, Claims, Staff};
 use crate::domain::checklist::{checklist, ChecklistResult};
 use crate::domain::cnpj::is_valid_cnpj;
@@ -66,8 +66,11 @@ async fn register(
     if !is_valid_cnpj(&body.cnpj) {
         return Err(ApiError::Unprocessable("CNPJ_INVALIDO"));
     }
-    if body.password.len() < 8 {
+    if body.password.chars().count() < 8 {
         return Err(ApiError::Unprocessable("SENHA_CURTA"));
+    }
+    if body.password.len() > 256 {
+        return Err(ApiError::Unprocessable("SENHA_LONGA"));
     }
     let cnpj: String = body.cnpj.chars().filter(|c| c.is_ascii_digit()).collect();
     let dup_supplier: Option<(Uuid,)> =
@@ -239,9 +242,12 @@ async fn decide(
     Path(id): Path<Uuid>,
     Json(body): Json<DecisionBody>,
 ) -> ApiResult<Json<Value>> {
+    let mut tx = state.pool.begin().await?;
     let current: Option<(String,)> =
-        sqlx::query_as("SELECT status FROM suppliers WHERE id = $1").bind(id)
-            .fetch_optional(&state.pool).await?;
+        sqlx::query_as("SELECT status FROM suppliers WHERE id = $1 FOR UPDATE")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
     let Some((status,)) = current else { return Err(ApiError::NotFound("NAO_ENCONTRADO")) };
     if status != "PENDING" {
         return Err(ApiError::Unprocessable("JA_DECIDIDO"));
@@ -252,6 +258,7 @@ async fn decide(
         _ => return Err(ApiError::Unprocessable("DECISAO_INVALIDA")),
     };
     if approve {
+        // reads supplier_documents only — no lock conflict with the suppliers row lock
         let check = load_checklist(&state.pool, id).await?;
         if !check.ok {
             return Err(ApiError::UnprocessableWith(
@@ -263,11 +270,12 @@ async fn decide(
     let new_status = if approve { "ACTIVE" } else { "REJECTED" };
     sqlx::query(
         "UPDATE suppliers SET status = $1, status_reason = $2, decided_at = now(), decided_by = $3 \
-         WHERE id = $4",
+         WHERE id = $4 AND status = 'PENDING'",
     )
     .bind(new_status).bind(&body.reason).bind(claims.sub).bind(id)
-    .execute(&state.pool).await?;
-    append_audit(&state.pool, AuditInput {
+    .execute(&mut *tx)
+    .await?;
+    append_audit_tx(&mut tx, AuditInput {
         actor_id: Some(claims.sub),
         actor_role: Some(claims.role.as_str()),
         event_type: if approve { "SUPPLIER_APPROVED" } else { "SUPPLIER_REJECTED" },
@@ -275,7 +283,8 @@ async fn decide(
         entity_id: id.to_string(),
         quotation_id: None,
         payload: json!({ "reason": body.reason }),
-    }).await?;
+    })
+    .await?;
     let message = if approve {
         "Credenciamento aprovado. Você já pode participar de cotações.".to_string()
     } else {
@@ -283,7 +292,9 @@ async fn decide(
     };
     sqlx::query("INSERT INTO notifications (id, supplier_id, kind, message) VALUES ($1,$2,'CREDENCIAMENTO',$3)")
         .bind(Uuid::new_v4()).bind(id).bind(&message)
-        .execute(&state.pool).await?;
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
     Ok(Json(json!({ "id": id, "status": new_status })))
 }
 
