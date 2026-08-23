@@ -1271,6 +1271,8 @@ pub fn verify_password(hash: &str, password: &str) -> bool {
 - [ ] **Step 2: Replace `api/src/routes/auth.rs`**
 
 ```rust
+use std::sync::OnceLock;
+
 use axum::extract::State;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -1278,7 +1280,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::auth::{sign_token, verify_password, AuthUser};
+use crate::auth::{hash_password, sign_token, verify_password, AuthUser};
 use crate::domain::types::Role;
 use crate::error::{ApiError, ApiResult};
 use crate::App;
@@ -1287,6 +1289,13 @@ use crate::App;
 struct LoginBody {
     email: String,
     password: String,
+}
+
+/// Verified against on the unknown-email path so both failure branches pay the
+/// same argon2 cost (prevents account/email enumeration by timing).
+fn dummy_hash() -> &'static str {
+    static DUMMY: OnceLock<String> = OnceLock::new();
+    DUMMY.get_or_init(|| hash_password("dummy-timing-equalizer"))
 }
 
 #[derive(sqlx::FromRow)]
@@ -1305,7 +1314,10 @@ async fn login(State(state): State<App>, Json(body): Json<LoginBody>) -> ApiResu
     .bind(&body.email)
     .fetch_optional(&state.pool)
     .await?;
-    let Some(user) = user else { return Err(ApiError::Unauthorized) };
+    let Some(user) = user else {
+        let _ = verify_password(dummy_hash(), &body.password);
+        return Err(ApiError::Unauthorized);
+    };
     if !verify_password(&user.password_hash, &body.password) {
         return Err(ApiError::Unauthorized);
     }
@@ -3688,10 +3700,20 @@ In `api/src/main.rs` add as the first line of `main`:
     ).init();
 ```
 
-In `api/src/lib.rs` `app()`, add below the cors layer line:
+In `api/src/lib.rs` `app()`, add below the cors layer line — the span logs the PATH ONLY, never the query string, because SSE and the printable pages authenticate via `?token=<jwt>` and default TraceLayer spans would write live bearer tokens into logs:
 
 ```rust
-        .layer(tower_http::trace::TraceLayer::new_for_http())
+        .layer(tower_http::trace::TraceLayer::new_for_http().make_span_with(
+            |req: &axum::http::Request<axum::body::Body>| {
+                tracing::info_span!("http", method = %req.method(), path = %req.uri().path())
+            },
+        ))
+```
+
+In `api/src/error.rs`, move the internal-error log into the structured pipeline — replace the `eprintln!("internal error: {msg}");` line inside `IntoResponse` with:
+
+```rust
+                tracing::error!(%msg, "internal error");
 ```
 
 - [ ] **Step 2: Implement `api/src/html.rs` (askama template structs)**
