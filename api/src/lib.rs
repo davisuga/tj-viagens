@@ -7,6 +7,7 @@ pub mod error;
 pub mod html;
 pub mod routes;
 pub mod sse;
+pub mod uploads;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

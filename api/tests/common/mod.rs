@@ -115,3 +115,41 @@ pub async fn login(app: &TestApp, email: &str) -> String {
     let body: serde_json::Value = res.json().await.unwrap();
     body["token"].as_str().unwrap().to_string()
 }
+
+/// Registers a supplier through the HTTP API, uploads all 4 required docs, returns supplier id.
+pub async fn register_with_docs(app: &TestApp, cnpj: &str, email: &str, name: &str) -> String {
+    let reg: serde_json::Value = app
+        .client
+        .post(format!("{}/suppliers/register", app.base))
+        .json(&serde_json::json!({
+            "cnpj": cnpj, "legalName": name, "contactEmail": email,
+            "userName": "Titular", "password": "demo1234"
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let supplier_id = reg["supplierId"].as_str().unwrap().to_string();
+    let token = login(app, email).await;
+    for doc_type in ["CONTRATO_SOCIAL", "CND_FEDERAL", "CRF_FGTS", "CNDT"] {
+        let form = reqwest::multipart::Form::new()
+            .text("type", doc_type)
+            .text("validUntil", "2027-12-31")
+            .part(
+                "file",
+                reqwest::multipart::Part::bytes(b"%PDF-1.4 fake".to_vec()).file_name("doc.pdf"),
+            );
+        let res = app
+            .client
+            .post(format!("{}/suppliers/me/documents", app.base))
+            .bearer_auth(&token)
+            .multipart(form)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 201, "doc upload failed: {doc_type}");
+    }
+    supplier_id
+}

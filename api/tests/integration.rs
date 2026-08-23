@@ -136,3 +136,125 @@ async fn audit_chain_appends_verifies_and_detects_tampering() {
         .unwrap();
     assert_eq!(denied.status(), 403);
 }
+
+#[tokio::test]
+async fn credenciamento_register_docs_checklist_and_homologation() {
+    let app = spawn_app().await;
+    common::create_staff(&app.pool, "servidor@tjrr.jus.br").await;
+    let staff_token = common::login(&app, "servidor@tjrr.jus.br").await;
+
+    let bad = app
+        .client
+        .post(format!("{}/suppliers/register", app.base))
+        .json(&json!({
+            "cnpj": "11.222.333/0001-82", "legalName": "X", "contactEmail": "x@example.com",
+            "userName": "X Y", "password": "demo1234"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad.status(), 422, "wrong check digit must be rejected");
+
+    let supplier_id =
+        common::register_with_docs(&app, "11.222.333/0001-81", "contato@voaroraima.com.br", "Voa Roraima Turismo").await;
+
+    let token = common::login(&app, "contato@voaroraima.com.br").await;
+    let me: serde_json::Value = app
+        .client
+        .get(format!("{}/suppliers/me", app.base))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(me["supplier"]["status"], "PENDING");
+    assert_eq!(me["checklist"]["ok"], true);
+
+    // duplicate registration -> 409 (also covers the unique-violation race path)
+    let dup = app
+        .client
+        .post(format!("{}/suppliers/register", app.base))
+        .json(&json!({
+            "cnpj": "11.222.333/0001-81", "legalName": "Clone", "contactEmail": "outro@example.com",
+            "userName": "Clone", "password": "demo1234"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(dup.status(), 409);
+
+    // approve without docs must fail for another supplier
+    let no_docs = app
+        .client
+        .post(format!("{}/suppliers/register", app.base))
+        .json(&json!({
+            "cnpj": "11.444.777/0001-61", "legalName": "Sem Docs", "contactEmail": "semdocs@example.com",
+            "userName": "Titular", "password": "demo1234"
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let refused = app
+        .client
+        .post(format!("{}/suppliers/{}/decision", app.base, no_docs["supplierId"].as_str().unwrap()))
+        .bearer_auth(&staff_token)
+        .json(&json!({ "decision": "APPROVE" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), 422);
+    assert_eq!(refused.json::<serde_json::Value>().await.unwrap()["error"], "CHECKLIST_PENDENTE");
+
+    // approve the complete one
+    let approved = app
+        .client
+        .post(format!("{}/suppliers/{supplier_id}/decision", app.base))
+        .bearer_auth(&staff_token)
+        .json(&json!({ "decision": "APPROVE" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(approved.status(), 200);
+    assert_eq!(approved.json::<serde_json::Value>().await.unwrap()["status"], "ACTIVE");
+
+    // supplier is notified in the panel
+    let notifications: serde_json::Value = app
+        .client
+        .get(format!("{}/notifications", app.base))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(notifications[0]["kind"], "CREDENCIAMENTO");
+
+    // staff-only listing blocked for suppliers
+    let denied = app
+        .client
+        .get(format!("{}/suppliers", app.base))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), 403);
+
+    // audit chain stays intact through the whole credenciamento flow
+    let audit: serde_json::Value = app
+        .client
+        .get(format!("{}/audit/verify", app.base))
+        .bearer_auth(&staff_token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(audit["ok"], true);
+}
