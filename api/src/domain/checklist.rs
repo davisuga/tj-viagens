@@ -63,4 +63,22 @@ mod tests {
         let docs: Vec<_> = REQUIRED_DOCS.iter().map(|t| (*t, future)).collect();
         assert!(checklist(&docs, today).ok);
     }
+
+    #[test]
+    fn latest_document_of_a_type_wins() {
+        let today = NaiveDate::from_ymd_opt(2026, 8, 23).unwrap();
+        let docs = vec![
+            (DocType::CndFederal, NaiveDate::from_ymd_opt(2026, 1, 1)), // expired, older upload
+            (DocType::CndFederal, NaiveDate::from_ymd_opt(2027, 1, 1)), // renewal, later upload
+        ];
+        let result = checklist(&docs, today);
+        assert!(result.expired.is_empty(), "renewal must supersede the expired doc");
+    }
+
+    #[test]
+    fn valid_until_today_is_not_expired() {
+        let today = NaiveDate::from_ymd_opt(2026, 8, 23).unwrap();
+        let docs = vec![(DocType::Cndt, Some(today))];
+        assert!(checklist(&docs, today).expired.is_empty());
+    }
 }

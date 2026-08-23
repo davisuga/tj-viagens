@@ -29,4 +29,11 @@ mod tests {
         assert_eq!(e.saved_cents, 32700);
         assert_eq!(e.saved_pct, 17.68);
     }
+
+    #[test]
+    fn handles_overrun_with_negative_savings() {
+        let e = compute_economy(150000, 165000);
+        assert_eq!(e.saved_cents, -15000);
+        assert_eq!(e.saved_pct, -10.0);
+    }
 }

@@ -124,3 +124,38 @@ impl DocType {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn enum_string_round_trips_are_case_sensitive() {
+        for role in [Role::Admin, Role::Servidor, Role::Fornecedor] {
+            assert_eq!(Role::parse(role.as_str()), Some(role));
+        }
+        for status in [
+            SupplierStatus::Pending,
+            SupplierStatus::Active,
+            SupplierStatus::Rejected,
+            SupplierStatus::Suspended,
+        ] {
+            assert_eq!(SupplierStatus::parse(status.as_str()), Some(status));
+        }
+        for status in [
+            QuotationStatus::Draft,
+            QuotationStatus::Open,
+            QuotationStatus::Closed,
+            QuotationStatus::Awarded,
+            QuotationStatus::Ticketed,
+            QuotationStatus::Completed,
+        ] {
+            assert_eq!(QuotationStatus::parse(status.as_str()), Some(status));
+        }
+        for doc in [DocType::ContratoSocial, DocType::CndFederal, DocType::CrfFgts, DocType::Cndt] {
+            assert_eq!(DocType::parse(doc.as_str()), Some(doc));
+        }
+        assert_eq!(Role::parse("admin"), None);
+        assert_eq!(DocType::parse("cndt"), None);
+    }
+}

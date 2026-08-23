@@ -24,4 +24,10 @@ mod tests {
         assert_eq!(format_brl(5), "R$ 0,05");
         assert_eq!(format_brl(185000000), "R$ 1.850.000,00");
     }
+
+    #[test]
+    fn formats_negative_cents() {
+        assert_eq!(format_brl(-1234), "-R$ 12,34");
+        assert_eq!(format_brl(-123456), "-R$ 1.234,56");
+    }
 }
