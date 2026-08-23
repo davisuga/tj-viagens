@@ -1,0 +1,14 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: tj
+      POSTGRES_PASSWORD: tj
+      POSTGRES_DB: tjviagens
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./docker/initdb:/docker-entrypoint-initdb.d
+      - pgdata:/var/lib/postgresql/data
+volumes:
+  pgdata:
