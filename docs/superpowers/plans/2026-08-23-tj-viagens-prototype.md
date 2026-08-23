@@ -157,8 +157,8 @@ CREATE DATABASE tjviagens_test;
 
 - [ ] **Step 3: Start Postgres, verify both DBs**
 
-Run: `docker compose up -d && sleep 4 && docker compose exec db psql -U tj -d postgres -c '\l' | grep tjviagens`
-Expected: rows for `tjviagens` and `tjviagens_test`. (`-d postgres` is required — with no database flag psql tries a DB named `tj`, which doesn't exist. Stale volume without the test DB: `docker compose down -v && docker compose up -d`.)
+Run: `docker compose up -d --wait && docker compose exec db psql -U tj -d postgres -c '\l' | grep tjviagens`
+Expected: rows for `tjviagens` and `tjviagens_test`. (`-d postgres` is required — with no database flag psql tries a DB named `tj`, which doesn't exist. `--wait` blocks on the healthcheck. Stale volume without the test DB: `docker compose down -v && docker compose up -d --wait`.)
 
 - [ ] **Step 4: Commit**
 
