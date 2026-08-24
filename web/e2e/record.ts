@@ -17,10 +17,10 @@ const API = process.env.API_URL ?? 'http://localhost:3001';
 const OUT = '../demo/out';
 
 let shot = 0;
-async function snap(page: Page, name: string): Promise<void> {
+async function snap(page: Page, name: string, fullPage = false): Promise<void> {
   shot += 1;
   const path = `${OUT}/shots/${String(shot).padStart(2, '0')}-${name}.png`;
-  await page.screenshot({ path });
+  await page.screenshot({ path, fullPage });
   console.log(`📸 ${path}`);
 }
 
@@ -92,6 +92,7 @@ async function main(): Promise<void> {
   // the UUID shape so it only matches the real detail page.
   await staff.waitForURL(/\/cotacoes\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
   const quotationId = staff.url().split('/').pop() ?? '';
+  await staff.getByRole('button', { name: 'Abrir cotação' }).waitFor();
   await snap(staff, 'staff-draft-detail');
 
   // ── Staff: open the dispute (confirm dialog) ──────────────────────
@@ -173,9 +174,9 @@ async function main(): Promise<void> {
   // ── Printable pages (token via localStorage) ──────────────────────
   const token = await staff.evaluate(() => localStorage.getItem('tj_token'));
   await staff.goto(`${API}/quotations/${quotationId}/service-order?token=${token}`);
-  await snap(staff, 'printable-service-order');
+  await snap(staff, 'printable-service-order', true);
   await staff.goto(`${API}/quotations/${quotationId}/report?token=${token}`);
-  await snap(staff, 'printable-report');
+  await snap(staff, 'printable-report', true);
 
   // ── Final dashboard ───────────────────────────────────────────────
   await staff.goto(`${WEB}/`);

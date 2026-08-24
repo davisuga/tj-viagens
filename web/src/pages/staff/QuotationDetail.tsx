@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { api, openPage, subscribeQuotation } from '@/lib/api';
-import { fmtDateTime, formatBRL } from '@/lib/domain';
+import { fmtCpf, fmtDateTime, formatBRL } from '@/lib/domain';
 import { errorMessage } from '@/lib/errors';
 import {
   proposalsCount, type RankingRow, type Report, type StaffQuotation,
@@ -129,7 +129,7 @@ export function StaffQuotationDetail() {
           </CardTitle>
           <div className="grid gap-1 text-sm text-muted-foreground md:grid-cols-2">
             <p>
-              Passageiro: {q.passenger.name} · CPF {q.passenger.cpf}
+              Passageiro: {q.passenger.name} · CPF {fmtCpf(q.passenger.cpf)}
             </p>
             <p>Embarque: {fmtDateTime(q.departureAt)}</p>
             <p>Voo de referência: {q.referenceFlight}</p>
@@ -336,13 +336,13 @@ export function StaffQuotationDetail() {
                 <p className="text-2xl font-bold text-emerald-700">
                   {formatBRL(report.data.economy.saved_cents)}{' '}
                   <span className="text-base font-normal">
-                    ({report.data.economy.saved_pct}% abaixo da referência)
+                    ({report.data.economy.saved_pct.toFixed(2).replace('.', ',')}% abaixo da referência)
                   </span>
                 </p>
               )}
               {report.data.serviceOrder && (
                 <p className="text-sm text-muted-foreground">
-                  OS {report.data.serviceOrder.number}
+                  {report.data.serviceOrder.number}
                 </p>
               )}
               <p className="text-sm">

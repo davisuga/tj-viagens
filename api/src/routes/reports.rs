@@ -10,7 +10,7 @@ use uuid::Uuid;
 use crate::audit::{list_events, verify_chain};
 use crate::auth::{AuthUser, Staff};
 use crate::domain::brl::format_brl;
-use crate::domain::cpf::mask_cpf;
+use crate::domain::cpf::{format_cpf, mask_cpf};
 use crate::domain::economy::compute_economy;
 use crate::domain::timefmt::fmt_boa_vista;
 use crate::domain::types::Role;
@@ -175,7 +175,7 @@ async fn service_order_page(
         supplier_name,
         supplier_cnpj,
         passenger_name: d.q.passenger_name.clone(),
-        passenger_cpf: d.q.passenger_cpf.clone(),
+        passenger_cpf: format_cpf(&d.q.passenger_cpf),
         passenger_sex: d.q.passenger_sex.clone(),
         passenger_birth: d.q.passenger_birth.format("%d/%m/%Y").to_string(),
         origin: d.q.origin.clone(),
@@ -186,6 +186,20 @@ async fn service_order_page(
         issued_at: format!("{} (horário de Boa Vista)", fmt_boa_vista(issued_at)),
     };
     Ok(Html(template.render().map_err(|e| ApiError::Internal(e.to_string()))?))
+}
+
+/// PT-BR label for the report page's status line (report.json keeps the raw
+/// machine status — this is display-only, for the printed/on-camera surface).
+fn status_label(status: &str) -> &'static str {
+    match crate::domain::types::QuotationStatus::parse(status) {
+        Some(crate::domain::types::QuotationStatus::Draft) => "Rascunho",
+        Some(crate::domain::types::QuotationStatus::Open) => "Aberta",
+        Some(crate::domain::types::QuotationStatus::Closed) => "Encerrada",
+        Some(crate::domain::types::QuotationStatus::Awarded) => "Adjudicada",
+        Some(crate::domain::types::QuotationStatus::Ticketed) => "Bilhete enviado",
+        Some(crate::domain::types::QuotationStatus::Completed) => "Concluída",
+        None => "—",
+    }
 }
 
 /// Printable dossier page — staff only (SEI attachment, prestação de contas).
@@ -221,7 +235,7 @@ async fn report_page(
     };
     let template = ReportTemplate {
         code: d.q.code.clone(),
-        status: d.q.status.clone(),
+        status: status_label(&d.q.status).to_string(),
         origin: d.q.origin.clone(),
         destination: d.q.destination.clone(),
         passenger_name: d.q.passenger_name.clone(),
@@ -247,7 +261,10 @@ async fn report_page(
             .collect(),
         has_economy: economy.is_some(),
         economy_saved: economy.as_ref().map(|e| format_brl(e.saved_cents)).unwrap_or_default(),
-        economy_pct: economy.as_ref().map(|e| e.saved_pct.to_string()).unwrap_or_default(),
+        economy_pct: economy
+            .as_ref()
+            .map(|e| format!("{:.2}", e.saved_pct).replace('.', ","))
+            .unwrap_or_default(),
         os_number: d.os.as_ref().map(|(n, _)| n.clone()).unwrap_or_default(),
         ticket_line,
         audit_ok: audit["ok"] == json!(true),

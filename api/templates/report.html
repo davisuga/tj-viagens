@@ -12,6 +12,7 @@
   table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
   th, td { padding: 0.35rem 0.5rem; text-align: left; border-bottom: 1px solid #eee; }
   th { color: #555; font-weight: normal; }
+  td.price-cell { white-space: nowrap; }
   .economy { background: #f0fdf4; border: 1px solid #bbf7d0; padding: 1rem; border-radius: 8px;
              font-size: 1.2rem; color: #14532d; }
   .audit-ok { color: #14532d; } .audit-bad { color: #b91c1c; }
@@ -37,7 +38,7 @@
   {% for p in proposals %}
   <tr>
     <td>{{ p.position }}º</td><td>{{ p.supplier }}</td><td>{{ p.cnpj }}</td>
-    <td>{{ p.price }}</td><td>{{ p.flight_info }}</td><td>{{ p.submitted_at }}</td>
+    <td class="price-cell">{{ p.price }}</td><td>{{ p.flight_info }}</td><td>{{ p.submitted_at }}</td>
   </tr>
   {% endfor %}
 </table>

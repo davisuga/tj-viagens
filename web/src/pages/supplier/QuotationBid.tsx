@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { api, openPage, subscribeQuotation } from '@/lib/api';
-import { fmtDateTime, formatBRL, parseBRL } from '@/lib/domain';
+import { fmtCpf, fmtDateOnly, fmtDateTime, formatBRL, parseBRL } from '@/lib/domain';
 import { errorMessage } from '@/lib/errors';
 import type { SupplierQuotation } from '@/lib/types';
 
@@ -239,8 +239,8 @@ export function SupplierQuotationPage() {
             <div className="rounded bg-muted p-3 text-sm">
               <p className="font-semibold">Dados do passageiro</p>
               <p>
-                {q.passenger.name} · CPF {q.passenger.cpf} · {q.passenger.sex} · nasc.{' '}
-                {q.passenger.birth}
+                {q.passenger.name} · CPF {fmtCpf(q.passenger.cpf)} · {q.passenger.sex} · nasc.{' '}
+                {fmtDateOnly(q.passenger.birth)}
               </p>
             </div>
             {/* Fluid Functionalism Button has no "outline" variant (primary/secondary/tertiary/ghost) —
