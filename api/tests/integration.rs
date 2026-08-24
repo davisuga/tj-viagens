@@ -690,8 +690,27 @@ async fn ticket_upload_divergences_late_flag_and_confirmation() {
         .unwrap();
     assert_eq!(denied.status(), 403);
 
-    // winner uploads clean ticket in time
     let winner_token = common::login(&app, winner_email).await;
+
+    // absurd price on the ticket is rejected before touching the DB
+    let absurd = app
+        .client
+        .post(format!("{}/quotations/{id}/ticket", app.base))
+        .bearer_auth(&winner_token)
+        .multipart(common::ticket_form("Maria da Silva", "2026-09-10T08:00:00Z", 2_000_000_000))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(absurd.status(), 422);
+    let ticket_count_before: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM tickets WHERE quotation_id = $1")
+            .bind(uuid::Uuid::parse_str(&id).unwrap())
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    assert_eq!(ticket_count_before, 0, "rejected ticket must not be inserted");
+
+    // winner uploads clean ticket in time
     let clean: serde_json::Value = app
         .client
         .post(format!("{}/quotations/{id}/ticket", app.base))

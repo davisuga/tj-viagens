@@ -11,6 +11,7 @@ use uuid::Uuid;
 use crate::audit::{append_audit_tx, AuditInput};
 use crate::auth::{AuthUser, Staff};
 use crate::domain::divergence::{compute_divergences, TicketFields};
+use crate::domain::types::QuotationStatus;
 use crate::error::{ApiError, ApiResult};
 use crate::sse::publish;
 use crate::uploads::save_upload;
@@ -30,7 +31,7 @@ async fn upload_ticket(
     let Some(q) = fetch_quotation(&state.pool, id).await? else {
         return Err(ApiError::NotFound("NAO_ENCONTRADA"));
     };
-    if q.status != "AWARDED" {
+    if QuotationStatus::parse(&q.status) != Some(QuotationStatus::Awarded) {
         return Err(ApiError::Unprocessable("NAO_AGUARDA_BILHETE"));
     }
     let proposals = fetch_proposals(&state.pool, id).await?;
@@ -68,6 +69,15 @@ async fn upload_ticket(
         .get("priceCents")
         .and_then(|v| v.parse().ok())
         .ok_or(ApiError::Unprocessable("BILHETE_INVALIDO"))?;
+    if passenger_name.trim().len() < 3 || passenger_name.chars().count() > 200 {
+        return Err(ApiError::Unprocessable("BILHETE_INVALIDO"));
+    }
+    if flight_info.trim().len() < 2 || flight_info.chars().count() > 200 {
+        return Err(ApiError::Unprocessable("BILHETE_INVALIDO"));
+    }
+    if price_cents <= 0 || price_cents > 1_000_000_000 {
+        return Err(ApiError::Unprocessable("BILHETE_INVALIDO"));
+    }
     // Written before the tx below: on a rolled-back tx (e.g. a lost double-upload
     // race) this file is orphaned on disk. Acceptable for the prototype.
     let Some((file_name, file_path)) = saved else {
@@ -117,7 +127,7 @@ async fn upload_ticket(
     })
     .await?;
     tx.commit().await?;
-    publish(&state, id, "status", json!({ "status": "TICKETED", "late": late, "divergences": divergences }));
+    publish(&state, id, "status", json!({ "status": "TICKETED" }));
     Ok((StatusCode::CREATED, Json(json!({ "id": ticket_id, "late": late, "divergences": divergences }))))
 }
 
