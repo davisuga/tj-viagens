@@ -1,0 +1,60 @@
+import { createContext, useContext, useState, type ReactNode } from 'react';
+import { Navigate } from 'react-router-dom';
+import { getToken, setToken } from './api';
+
+export type SessionUser = {
+  sub: string;
+  name: string;
+  role: 'ADMIN' | 'SERVIDOR' | 'FORNECEDOR';
+  supplierId: string | null;
+};
+
+export function parseJwt(token: string): SessionUser | null {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    return {
+      sub: payload.sub,
+      name: payload.name,
+      role: payload.role,
+      supplierId: payload.supplier_id ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+type AuthCtx = { user: SessionUser | null; signIn: (token: string) => void; signOut: () => void };
+
+const Ctx = createContext<AuthCtx>({ user: null, signIn: () => {}, signOut: () => {} });
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<SessionUser | null>(() => {
+    const t = getToken();
+    return t ? parseJwt(t) : null;
+  });
+  const signIn = (token: string) => {
+    setToken(token);
+    setUser(parseJwt(token));
+  };
+  const signOut = () => {
+    setToken(null);
+    setUser(null);
+  };
+  return <Ctx.Provider value={{ user, signIn, signOut }}>{children}</Ctx.Provider>;
+}
+
+export function useAuth(): AuthCtx {
+  return useContext(Ctx);
+}
+
+export function RequireRole({
+  roles,
+  children,
+}: {
+  roles: SessionUser['role'][];
+  children: ReactNode;
+}) {
+  const { user } = useAuth();
+  if (!user || !roles.includes(user.role)) return <Navigate to="/login" replace />;
+  return <>{children}</>;
+}
