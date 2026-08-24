@@ -151,15 +151,18 @@ async fn seed_completed_quotation(pool: &PgPool, servidor_id: Uuid, supplier_ids
     .await
     .unwrap();
 
+    let winner_price: i64 = 149900;
     let bids: [(Uuid, i64); 3] = [
         (supplier_ids[0], 152300),
-        (supplier_ids[1], 149900),
+        (supplier_ids[1], winner_price),
         (supplier_ids[2], 158000),
     ];
+    let mut proposal_ids: Vec<Uuid> = Vec::new();
     let mut winner_proposal = Uuid::nil();
     for (i, (supplier_id, price)) in bids.iter().enumerate() {
         let pid = Uuid::new_v4();
-        if *price == 149900 {
+        proposal_ids.push(pid);
+        if *price == winner_price {
             winner_proposal = pid;
         }
         sqlx::query(
@@ -192,15 +195,17 @@ async fn seed_completed_quotation(pool: &PgPool, servidor_id: Uuid, supplier_ids
     .execute(pool)
     .await
     .unwrap();
+    let ticket_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO tickets (id, quotation_id, file_name, file_path, passenger_name, flight_info, \
          departure_at, price_cents, divergences, late, uploaded_at, confirmed_at, confirmed_by) \
          VALUES ($1,$2,'eticket-maria.pdf','seed/eticket-maria.pdf','Maria da Silva','G3-1720 08:15', \
-         $3,149900,$4,false,$5,$6,$7)",
+         $3,$4,$5,false,$6,$7,$8)",
     )
-    .bind(Uuid::new_v4())
+    .bind(ticket_id)
     .bind(q_id)
     .bind(opened + Duration::days(20))
+    .bind(winner_price)
     .bind(json!([]))
     .bind(awarded_at + Duration::minutes(12))
     .bind(awarded_at + Duration::minutes(20))
@@ -226,14 +231,14 @@ async fn seed_completed_quotation(pool: &PgPool, servidor_id: Uuid, supplier_ids
     let events: Vec<(&str, &str, String, serde_json::Value)> = vec![
         ("QUOTATION_CREATED", "Quotation", q_id.to_string(), json!({ "code": code })),
         ("QUOTATION_OPENED", "Quotation", q_id.to_string(), json!({ "code": code, "notified": 3 })),
-        ("PROPOSAL_SUBMITTED", "Proposal", bids[0].0.to_string(), json!({ "totalPriceCents": 152300 })),
-        ("PROPOSAL_SUBMITTED", "Proposal", bids[1].0.to_string(), json!({ "totalPriceCents": 149900 })),
-        ("PROPOSAL_SUBMITTED", "Proposal", bids[2].0.to_string(), json!({ "totalPriceCents": 158000 })),
+        ("PROPOSAL_SUBMITTED", "Proposal", proposal_ids[0].to_string(), json!({ "totalPriceCents": 152300 })),
+        ("PROPOSAL_SUBMITTED", "Proposal", proposal_ids[1].to_string(), json!({ "totalPriceCents": winner_price })),
+        ("PROPOSAL_SUBMITTED", "Proposal", proposal_ids[2].to_string(), json!({ "totalPriceCents": 158000 })),
         ("QUOTATION_CLOSED", "Quotation", q_id.to_string(), json!({})),
-        ("QUOTATION_AWARDED", "Quotation", q_id.to_string(), json!({ "proposalId": winner_proposal.to_string(), "totalPriceCents": 149900 })),
+        ("QUOTATION_AWARDED", "Quotation", q_id.to_string(), json!({ "proposalId": winner_proposal.to_string(), "totalPriceCents": winner_price })),
         ("SERVICE_ORDER_ISSUED", "ServiceOrder", os_number.clone(), json!({ "number": os_number })),
-        ("TICKET_UPLOADED", "Ticket", q_id.to_string(), json!({ "late": false, "divergences": [] })),
-        ("TICKET_CONFIRMED", "Ticket", q_id.to_string(), json!({})),
+        ("TICKET_UPLOADED", "Ticket", ticket_id.to_string(), json!({ "late": false, "divergences": [] })),
+        ("TICKET_CONFIRMED", "Ticket", ticket_id.to_string(), json!({})),
     ];
     for (event_type, entity, entity_id, payload) in events {
         append_audit(
