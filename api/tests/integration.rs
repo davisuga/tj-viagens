@@ -493,6 +493,25 @@ async fn proposals_concurrent_bids_replacement_and_window_enforcement() {
     assert_eq!(count_after, 3);
     assert!(first["submittedAt"].as_str().is_some());
 
+    let replaced_events: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM audit_events WHERE event_type = 'PROPOSAL_REPLACED'",
+    )
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(replaced_events, 1, "revision audited as its own event type");
+
+    // absurd price rejected
+    let absurd = app
+        .client
+        .post(format!("{}/quotations/{id}/proposals", app.base))
+        .bearer_auth(&tokens[1])
+        .json(&json!({ "totalPriceCents": 2_000_000_000i64, "flightInfo": "G3-1720" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(absurd.status(), 422);
+
     // window enforcement: server clock says no (R4)
     common::time_travel_past_close(&app.pool, &id).await;
     let late = app
