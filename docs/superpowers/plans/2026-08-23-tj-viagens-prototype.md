@@ -6946,6 +6946,9 @@ git commit -m "feat(web): staff area - action-queue dashboard, demand form, stat
 
 ### Task 15: Seed data, README quickstart, demo environment
 
+> **As built (execution record — commits `c3d7603` + follow-up; supersedes the seed block below where different):**
+> Audit `entity_id`s follow the production convention (row's own PK): the three PROPOSAL_SUBMITTED events carry the PROPOSAL ids (captured in a `proposal_ids` vec, not `bids[i].0` which is the supplier id), and TICKET_UPLOADED/TICKET_CONFIRMED carry the TICKET id (hoisted `let ticket_id`), not the quotation id. `winner_price` is a single binding used for the winning bid, the ticket insert, and audit payloads. Verified: /audit/verify ok count 10; metrics {awardedCount 1, totalSavedCents 35100, avgParticipants 3, ticketsOnTimePct 100}; idempotent double-run; tests unaffected.
+
 **Files:**
 - Replace: `api/src/bin/seed.rs`
 - Create: `README.md`
