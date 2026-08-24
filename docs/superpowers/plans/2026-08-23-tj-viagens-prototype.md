@@ -3479,6 +3479,9 @@ git commit -m "feat(api): lowest-price ranking with tiebreak, award, OS number a
 
 ### Task 9: E-ticket — winner upload, deterministic divergence check, staff confirmation
 
+> **As built (execution record — commits `33f7163` + `eee1b38`; supersedes the blocks below where they differ):**
+> upload_ticket and confirm_ticket are atomic + single-shot (guarded UPDATEs `AND status='AWARDED'`/`'TICKETED'` + `append_audit_tx` in one tx; publish after commit; double-upload/confirm → 422 with exactly one audit row each — race-probed). SSE events are STATUS-ONLY (`{"status":"TICKETED"}`) — late/divergences stay in the winner's HTTP response and the audit payload, never broadcast (losing suppliers can subscribe to the channel). Ticket field bounds mirror proposals (name 3–200, flight 2–200, 0 < price ≤ 1e9 → 422). Status pre-check uses `QuotationStatus::parse`. Accepted delta: confirm on nonexistent quotation → 404 BILHETE_NAO_ENVIADO (no separate NAO_ENCONTRADA pre-check). Known accepted tradeoff: multipart file bytes hit disk before validation/tx — failed attempts orphan files in uploads/ (no serving endpoint exists; content-type gating is a hard prerequisite for any future download route).
+
 **Files:**
 - Replace: `api/src/routes/tickets.rs`
 - Modify: `api/tests/integration.rs`
