@@ -64,6 +64,12 @@ export function StaffQuotationDetail() {
     });
   }, [id, queryClient]);
 
+  // Route param change reuses this component instance — reset per-quotation state.
+  useEffect(() => {
+    setSelected(null);
+    setJustification('Menor preço entre as propostas válidas.');
+  }, [id]);
+
   // recommended winner: lowest price pre-selected (UX: one-click adjudication)
   useEffect(() => {
     const first = ranking.data?.ranking[0];
@@ -75,7 +81,14 @@ export function StaffQuotationDetail() {
     try {
       await api(`/quotations/${id}/${path}`, { method: 'POST', body });
       if (success) toast.success(success);
-      await queryClient.invalidateQueries();
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['staff-quotation', id] }),
+        queryClient.invalidateQueries({ queryKey: ['ranking', id] }),
+        queryClient.invalidateQueries({ queryKey: ['report', id] }),
+        queryClient.invalidateQueries({ queryKey: ['audit'] }),
+        queryClient.invalidateQueries({ queryKey: ['staff-quotations'] }),
+        queryClient.invalidateQueries({ queryKey: ['metrics'] }),
+      ]);
     } catch (err) {
       toast.error(errorMessage(err));
     } finally {

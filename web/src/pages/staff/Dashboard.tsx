@@ -27,6 +27,9 @@ function QuotationLine({ q, cta }: { q: StaffQuotation; cta: string }) {
         {q.status === 'OPEN' && q.closesAt && (
           <Countdown deadline={q.closesAt} serverNow={q.serverNow} size="sm" />
         )}
+        {q.status === 'AWARDED' && q.ticketDeadlineAt && (
+          <Countdown deadline={q.ticketDeadlineAt} serverNow={q.serverNow} size="sm" />
+        )}
         <Button asChild size="sm">
           <Link to={`/cotacoes/${q.id}`}>{cta}</Link>
         </Button>

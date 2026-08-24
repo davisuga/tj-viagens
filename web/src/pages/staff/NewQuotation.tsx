@@ -53,8 +53,10 @@ export function NewQuotation() {
           passengerBirth: form.passengerBirth,
           origin: form.origin.toUpperCase(),
           destination: form.destination.toUpperCase(),
-          departureAt: new Date(form.departureAt).toISOString(),
-          returnAt: form.returnAt ? new Date(form.returnAt).toISOString() : null,
+          // datetime-local has no timezone; anchor to Boa Vista (UTC-4, no DST)
+          // so the demand time is correct regardless of the operator's OS timezone.
+          departureAt: new Date(form.departureAt + ':00-04:00').toISOString(),
+          returnAt: form.returnAt ? new Date(form.returnAt + ':00-04:00').toISOString() : null,
           referenceFlight: form.referenceFlight,
           referencePriceCents: cents,
         },
@@ -141,7 +143,7 @@ export function NewQuotation() {
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="departureAt">Embarque</Label>
+              <Label htmlFor="departureAt">Embarque (horário de Boa Vista)</Label>
               <Input
                 id="departureAt"
                 type="datetime-local"
@@ -151,7 +153,7 @@ export function NewQuotation() {
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="returnAt">Retorno (opcional)</Label>
+              <Label htmlFor="returnAt">Retorno (opcional, horário de Boa Vista)</Label>
               <Input
                 id="returnAt"
                 type="datetime-local"
