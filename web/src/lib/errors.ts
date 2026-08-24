@@ -33,10 +33,11 @@ const MESSAGES: Record<string, string> = {
 
 export function errorMessage(err: unknown): string {
   if (err instanceof Error) {
-    return (
-      MESSAGES[err.message] ??
-      (err.message.startsWith('HTTP') ? 'Falha de comunicação com o servidor.' : err.message)
-    );
+    const known = MESSAGES[err.message];
+    if (known) return known;
+    // Anything not in the API's code dictionary is transport-level noise
+    // ("HTTP 500", "Failed to fetch", …) — never show raw English to the user.
+    return 'Falha de comunicação com o servidor.';
   }
   return 'Falha inesperada.';
 }

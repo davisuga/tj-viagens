@@ -4,7 +4,9 @@
 <meta charset="utf-8">
 <title>Ordem de Serviço {{ number }}</title>
 <style>
-  body { font-family: Georgia, serif; max-width: 720px; margin: 2rem auto; color: #111; }
+  /* Explicit light canvas: without it, dark-mode browsers paint a dark page behind #111 text. */
+  html { background: #fff; color-scheme: light; }
+  body { font-family: Georgia, serif; max-width: 720px; margin: 2rem auto; color: #111; background: #fff; }
   header { text-align: center; border-bottom: 3px double #1e3a8a; padding-bottom: 1rem; }
   h1 { font-size: 1.1rem; letter-spacing: 0.05em; margin: 0; }
   h2 { font-size: 1.4rem; color: #1e3a8a; margin: 0.4rem 0 0; }

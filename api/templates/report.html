@@ -4,7 +4,9 @@
 <meta charset="utf-8">
 <title>Relatório {{ code }}</title>
 <style>
-  body { font-family: Georgia, serif; max-width: 760px; margin: 2rem auto; color: #111; }
+  /* Explicit light canvas: without it, dark-mode browsers paint a dark page behind #111 text. */
+  html { background: #fff; color-scheme: light; }
+  body { font-family: Georgia, serif; max-width: 760px; margin: 2rem auto; color: #111; background: #fff; }
   h1 { font-size: 1.3rem; color: #1e3a8a; text-align: center; }
   h2 { font-size: 0.95rem; text-transform: uppercase; color: #555; border-bottom: 1px solid #ddd; margin-top: 1.6rem; }
   table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
