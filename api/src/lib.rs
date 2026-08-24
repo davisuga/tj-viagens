@@ -53,6 +53,7 @@ pub fn app(state: App) -> Router {
         .route("/health", get(health))
         .route("/time", get(time_now))
         .merge(routes::router())
+        .merge(sse::router())
         .layer(cors)
         .layer(tower_http::trace::TraceLayer::new_for_http().make_span_with(
             |req: &axum::http::Request<axum::body::Body>| {

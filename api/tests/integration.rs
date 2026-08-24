@@ -914,3 +914,219 @@ async fn report_metrics_and_printable_pages_after_completed_flow() {
         .unwrap();
     assert_eq!(stale_report["quotation"]["status"], "CLOSED");
 }
+
+#[tokio::test]
+async fn sse_stream_delivers_hello_then_proposal_count() {
+    let app = spawn_app().await;
+    common::create_staff(&app.pool, "servidor@tjrr.jus.br").await;
+    let staff_token = common::login(&app, "servidor@tjrr.jus.br").await;
+    common::create_supplier(&app.pool, "11222333000181", "a@example.com", "ACTIVE", "Voa Roraima").await;
+    let id = common::create_open_quotation(&app, &staff_token).await;
+
+    let res = app
+        .client
+        .get(format!("{}/quotations/{id}/events?token={staff_token}", app.base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    assert!(res.headers()["content-type"].to_str().unwrap().contains("text/event-stream"));
+
+    let mut stream = res.bytes_stream();
+    let mut buffer = String::new();
+
+    use futures::StreamExt;
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while let Some(chunk) = stream.next().await {
+            buffer.push_str(&String::from_utf8_lossy(&chunk.unwrap()));
+            if buffer.contains("event: hello") {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("hello event within 5s");
+
+    // a bid publishes a count-only event
+    let supplier_token = common::login(&app, "a@example.com").await;
+    app.client
+        .post(format!("{}/quotations/{id}/proposals", app.base))
+        .bearer_auth(&supplier_token)
+        .json(&json!({ "totalPriceCents": 150000, "flightInfo": "G3-1720" }))
+        .send()
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while let Some(chunk) = stream.next().await {
+            buffer.push_str(&String::from_utf8_lossy(&chunk.unwrap()));
+            if buffer.contains("\"count\":1") {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("proposal count event within 5s");
+    assert!(!buffer.contains("150000"), "SSE must never leak bid values");
+
+    // no token -> 401
+    let anon = app
+        .client
+        .get(format!("{}/quotations/{id}/events", app.base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(anon.status(), 401);
+}
+
+#[tokio::test]
+async fn full_flow_credenciamento_to_report_through_http_only() {
+    let app = spawn_app().await;
+    common::create_staff(&app.pool, "servidor@tjrr.jus.br").await;
+    let staff_token = common::login(&app, "servidor@tjrr.jus.br").await;
+
+    // 1. Credenciamento via API: register + 4 docs + homologation, three suppliers
+    let companies = [
+        ("11.222.333/0001-81", "voa@example.com", "Voa Roraima", 152300i64),
+        ("11.444.777/0001-61", "ama@example.com", "Amazônia Viagens", 149900),
+        ("12.345.678/0001-95", "rio@example.com", "Rio Branco Tur", 158000),
+    ];
+    for (cnpj, email, name, _) in &companies {
+        let supplier_id = common::register_with_docs(&app, cnpj, email, name).await;
+        let approved = app
+            .client
+            .post(format!("{}/suppliers/{supplier_id}/decision", app.base))
+            .bearer_auth(&staff_token)
+            .json(&json!({ "decision": "APPROVE" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(approved.status(), 200);
+    }
+
+    // 2. Demand + simultaneous notification
+    let id = common::create_open_quotation(&app, &staff_token).await;
+    let notified: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM notifications WHERE kind = 'COTACAO_ABERTA'")
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    assert_eq!(notified, 3);
+
+    // 3. Concurrent blind bids
+    let bids = futures::future::join_all(companies.iter().map(|(_, email, _, price)| {
+        let app_ref = &app;
+        let id_ref = &id;
+        async move {
+            let token = common::login(app_ref, email).await;
+            app_ref
+                .client
+                .post(format!("{}/quotations/{id_ref}/proposals", app_ref.base))
+                .bearer_auth(&token)
+                .json(&json!({ "totalPriceCents": price, "flightInfo": "G3-1720 08:15" }))
+                .send()
+                .await
+                .unwrap()
+        }
+    }))
+    .await;
+    for bid in bids {
+        assert_eq!(bid.status(), 201);
+    }
+
+    // 4. Close + ranking lowest-first
+    common::time_travel_past_close(&app.pool, &id).await;
+    let ranking: serde_json::Value = app
+        .client
+        .get(format!("{}/quotations/{id}/ranking", app.base))
+        .bearer_auth(&staff_token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let prices: Vec<i64> = ranking["ranking"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["totalPriceCents"].as_i64().unwrap())
+        .collect();
+    assert_eq!(prices, vec![149900, 152300, 158000]);
+
+    // 5. Award + OS
+    let award: serde_json::Value = app
+        .client
+        .post(format!("{}/quotations/{id}/award", app.base))
+        .bearer_auth(&staff_token)
+        .json(&json!({
+            "proposalId": ranking["ranking"][0]["proposalId"],
+            "justification": "Menor preço entre as propostas válidas"
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(award["serviceOrder"]["number"], "OS-2026-0001");
+
+    // 6. Winner e-ticket + confirmation
+    let winner_token = common::login(&app, "ama@example.com").await;
+    let ticket: serde_json::Value = app
+        .client
+        .post(format!("{}/quotations/{id}/ticket", app.base))
+        .bearer_auth(&winner_token)
+        .multipart(common::ticket_form("Maria da Silva", "2026-09-10T08:00:00Z", 149900))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(ticket["divergences"], json!([]));
+    app.client
+        .post(format!("{}/quotations/{id}/ticket/confirm", app.base))
+        .bearer_auth(&staff_token)
+        .send()
+        .await
+        .unwrap();
+
+    // 7. Dossier + audit integrity + KPIs
+    let report: serde_json::Value = app
+        .client
+        .get(format!("{}/quotations/{id}/report.json", app.base))
+        .bearer_auth(&staff_token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(report["quotation"]["status"], "COMPLETED");
+    assert_eq!(report["economy"]["saved_cents"], 35100);
+    assert_eq!(report["notifiedSuppliers"], 3);
+
+    let audit: serde_json::Value = app
+        .client
+        .get(format!("{}/audit/verify", app.base))
+        .bearer_auth(&staff_token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(audit["ok"], true);
+
+    let metrics: serde_json::Value = app
+        .client
+        .get(format!("{}/metrics/summary", app.base))
+        .bearer_auth(&staff_token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(metrics["awardedCount"], 1);
+}
