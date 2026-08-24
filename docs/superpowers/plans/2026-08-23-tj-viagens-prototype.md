@@ -3125,7 +3125,28 @@ git commit -m "feat(api): blind proposal submission with upsert-replace and serv
 
 **Files:**
 - Replace: `api/src/routes/award.rs`
-- Modify: `api/tests/integration.rs`
+- Modify: `api/src/routes/quotations.rs` (make `next_code` executor-generic), `api/tests/integration.rs`
+
+- [ ] **Step 0: Make `next_code` executor-generic (usable inside the award transaction)**
+
+In `api/src/routes/quotations.rs`, change the `next_code` signature (body unchanged except the executor):
+
+```rust
+/// Atomic sequential codes: COT-2026-0001, OS-2026-0001.
+pub async fn next_code<'e, E: sqlx::PgExecutor<'e>>(executor: E, prefix: &str) -> ApiResult<String> {
+    let key = format!("{prefix}-{}", Utc::now().format("%Y"));
+    let value: i64 = sqlx::query_scalar(
+        "INSERT INTO counters (id, value) VALUES ($1, 1) \
+         ON CONFLICT (id) DO UPDATE SET value = counters.value + 1 RETURNING value",
+    )
+    .bind(&key)
+    .fetch_one(executor)
+    .await?;
+    Ok(format!("{key}-{value:04}"))
+}
+```
+
+The existing call site `next_code(&state.pool, "COT")` keeps compiling unchanged; the award flow passes `&mut *tx` so an OS number is never burned by a rolled-back award.
 
 - [ ] **Step 1: Replace `api/src/routes/award.rs`**
 
@@ -3140,8 +3161,9 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::audit::{append_audit, AuditInput};
+use crate::audit::{append_audit_tx, AuditInput};
 use crate::auth::Staff;
+use crate::domain::timefmt::fmt_boa_vista;
 use crate::domain::types::QuotationStatus;
 use crate::error::{ApiError, ApiResult};
 use crate::sse::publish;
@@ -3236,19 +3258,26 @@ async fn award(
         return Err(ApiError::Unprocessable("PROPOSTA_INVALIDA"));
     };
     let deadline = now + Duration::minutes(state.config.ticket_window_minutes);
-    sqlx::query(
+    // Award + OS number + both audit entries + winner notification commit ATOMICALLY.
+    // The guarded UPDATE makes a double-submit lose with 422 (single-shot), and a
+    // rolled-back award never burns an OS number (next_code runs inside the tx).
+    let mut tx = state.pool.begin().await?;
+    let updated = sqlx::query(
         "UPDATE quotations SET status = 'AWARDED', awarded_proposal_id = $1, awarded_at = $2, \
-         award_justification = $3, ticket_deadline_at = $4 WHERE id = $5",
+         award_justification = $3, ticket_deadline_at = $4 WHERE id = $5 AND status = 'CLOSED'",
     )
     .bind(winner.id).bind(now).bind(&body.justification).bind(deadline).bind(id)
-    .execute(&state.pool)
+    .execute(&mut *tx)
     .await?;
-    let os_number = next_code(&state.pool, "OS").await?;
+    if updated.rows_affected() == 0 {
+        return Err(ApiError::Unprocessable("NAO_ESTA_FECHADA"));
+    }
+    let os_number = next_code(&mut *tx, "OS").await?;
     sqlx::query("INSERT INTO service_orders (id, quotation_id, number) VALUES ($1,$2,$3)")
         .bind(Uuid::new_v4()).bind(id).bind(&os_number)
-        .execute(&state.pool)
+        .execute(&mut *tx)
         .await?;
-    append_audit(&state.pool, AuditInput {
+    append_audit_tx(&mut tx, AuditInput {
         actor_id: Some(claims.sub),
         actor_role: Some(claims.role.as_str()),
         event_type: "QUOTATION_AWARDED",
@@ -3263,7 +3292,7 @@ async fn award(
         }),
     })
     .await?;
-    append_audit(&state.pool, AuditInput {
+    append_audit_tx(&mut tx, AuditInput {
         actor_id: Some(claims.sub),
         actor_role: Some(claims.role.as_str()),
         event_type: "SERVICE_ORDER_ISSUED",
@@ -3276,20 +3305,22 @@ async fn award(
     let (winner_email,): (String,) =
         sqlx::query_as("SELECT contact_email FROM suppliers WHERE id = $1")
             .bind(winner.supplier_id)
-            .fetch_one(&state.pool)
+            .fetch_one(&mut *tx)
             .await?;
     let message = format!(
-        "Sua proposta venceu a cotação {}. Envie o e-ticket até {}.",
+        "Sua proposta venceu a cotação {}. Envie o e-ticket até {} (horário de Boa Vista).",
         q.code,
-        deadline.to_rfc3339()
+        fmt_boa_vista(deadline)
     );
     sqlx::query(
         "INSERT INTO notifications (id, supplier_id, quotation_id, kind, message) \
          VALUES ($1,$2,$3,'VENCEDORA',$4)",
     )
     .bind(Uuid::new_v4()).bind(winner.supplier_id).bind(id).bind(&message)
-    .execute(&state.pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
+    // Side effects only after the durable commit.
     println!("[mail] to={winner_email} subject=\"Vencedora da cotação {}\"", q.code);
     publish(&state, id, "status", json!({ "status": "AWARDED", "ticketDeadlineAt": deadline.to_rfc3339() }));
     Ok(Json(json!({
@@ -3398,6 +3429,34 @@ async fn ranking_orders_lowest_first_with_tiebreak_then_award_starts_ticket_wind
         .await
         .unwrap();
     assert_eq!(status, "AWARDED");
+
+    // single-shot: a second award (double-click) loses with 422, exactly one audit row
+    let again = app
+        .client
+        .post(format!("{}/quotations/{id}/award", app.base))
+        .bearer_auth(&staff_token)
+        .json(&json!({ "proposalId": winner_proposal, "justification": "Menor preço e conformidade" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(again.status(), 422);
+    let award_events: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM audit_events WHERE event_type = 'QUOTATION_AWARDED'",
+    )
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(award_events, 1);
+
+    // winner notification copy is Boa Vista local, never raw UTC
+    let msg: String = sqlx::query_scalar(
+        "SELECT message FROM notifications WHERE kind = 'VENCEDORA' LIMIT 1",
+    )
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert!(msg.contains("horário de Boa Vista"), "must state the timezone: {msg}");
+    assert!(!msg.contains("+00:00"), "no raw UTC in supplier copy: {msg}");
 }
 ```
 
