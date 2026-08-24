@@ -6091,6 +6091,9 @@ git commit -m "feat(web): supplier area - registration, docs/checklist home and 
 
 ### Task 14: Staff area — action-queue dashboard, fast demand form, state-machine detail, homologation
 
+> **As built (execution record — commits `9b4b31d` + `79f046f` + `c807d51`; supersedes below where different):**
+> Full golden path browser-verified (create→open dialog→SSE live count→close→pre-selected ranking→one-click award→conference→completed→economy+audit badge+printable via ?token; homologation; real KPI numbers; 375px). FF specifics: destructive buttons = `tertiary` + red text classes (FF's inner-span fill makes bg overrides invisible); Select/TableRow index APIs as in Task 13. QuotationDetail: per-id state reset (selected/justification), scoped invalidations, refetchInterval 15s, isError gates (Dashboard too). NewQuotation: datetime-local anchored `+':00-04:00'` (Boa Vista fixed UTC-4) with labeled "(horário de Boa Vista)"; CPF inputMode numeric; reference price live preview. Dashboard AWARDED rows show the 30-min ticket countdown. Controller follow-up 79f046f: errors.ts transport fallback; printable templates force light canvas (dark-mode browsers rendered dark-on-dark).
+
 **Files:**
 - Create: `web/src/pages/staff/Dashboard.tsx`, `web/src/pages/staff/NewQuotation.tsx`, `web/src/pages/staff/QuotationDetail.tsx`, `web/src/pages/staff/Suppliers.tsx`
 - Replace: `web/src/App.tsx` (final version)
