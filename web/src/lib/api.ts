@@ -28,6 +28,10 @@ export async function api<T>(
     body = JSON.stringify(opts.body);
   }
   const res = await fetch(apiUrl(path), { method: opts.method ?? 'GET', headers, body });
+  if (res.status === 401) {
+    setToken(null);
+    if (!location.pathname.startsWith('/login')) location.href = '/login';
+  }
   if (!res.ok) {
     const detail = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(detail.error ?? `HTTP ${res.status}`);
@@ -46,5 +50,8 @@ export function subscribeQuotation(id: string, onEvent: (event: string, data: un
   for (const name of ['hello', 'tick', 'status', 'proposal']) {
     source.addEventListener(name, (e) => onEvent(name, JSON.parse((e as MessageEvent).data)));
   }
+  source.onerror = () => {
+    if (source.readyState === EventSource.CLOSED) onEvent('closed', {});
+  };
   return () => source.close();
 }

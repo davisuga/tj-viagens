@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { formatMmSs, remainingMs, serverOffsetMs } from '@/lib/domain';
 
 export function Countdown({
@@ -14,13 +14,20 @@ export function Countdown({
 }) {
   const offset = useMemo(() => serverOffsetMs(serverNow, Date.now()), [serverNow]);
   const [ms, setMs] = useState(() => remainingMs(deadline, offset, Date.now()));
+  const fired = useRef(false);
+  useEffect(() => {
+    fired.current = false;
+  }, [deadline]);
   useEffect(() => {
     const timer = setInterval(() => {
       const next = remainingMs(deadline, offset, Date.now());
       setMs(next);
       if (next === 0) {
         clearInterval(timer);
-        onExpire?.();
+        if (!fired.current) {
+          fired.current = true;
+          onExpire?.();
+        }
       }
     }, 250);
     return () => clearInterval(timer);
