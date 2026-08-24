@@ -12,12 +12,13 @@ use crate::auth::{AuthUser, Staff};
 use crate::domain::brl::format_brl;
 use crate::domain::cpf::mask_cpf;
 use crate::domain::economy::compute_economy;
+use crate::domain::timefmt::fmt_boa_vista;
 use crate::domain::types::Role;
 use crate::error::{ApiError, ApiResult};
 use crate::html::{OsTemplate, ReportEvent, ReportProposal, ReportTemplate};
 use crate::App;
 
-use super::quotations::{fetch_proposals, fetch_quotation};
+use super::quotations::fetch_proposals;
 
 async fn audit_verify(State(state): State<App>, Staff(_claims): Staff) -> ApiResult<Json<Value>> {
     Ok(Json(verify_chain(&state.pool).await?))
@@ -49,7 +50,11 @@ struct Dossier {
 
 #[allow(clippy::type_complexity)]
 async fn load_dossier(state: &App, id: Uuid) -> ApiResult<Option<Dossier>> {
-    let Some(q) = fetch_quotation(&state.pool, id).await? else { return Ok(None) };
+    // R4: lazy-close so a lapsed-OPEN quotation reports CLOSED in the dossier/report
+    // pages too, not just the live quotation endpoints.
+    let Some(q) = super::quotations::load_quotation(state, id, Utc::now()).await? else {
+        return Ok(None);
+    };
     let proposals = fetch_proposals(&state.pool, id).await?;
     let supplier_ids: Vec<Uuid> = proposals.iter().map(|p| p.supplier_id).collect();
     let names: Vec<(Uuid, String, String)> =
@@ -175,10 +180,10 @@ async fn service_order_page(
         passenger_birth: d.q.passenger_birth.format("%d/%m/%Y").to_string(),
         origin: d.q.origin.clone(),
         destination: d.q.destination.clone(),
-        departure_at: d.q.departure_at.format("%d/%m/%Y %H:%M UTC").to_string(),
+        departure_at: format!("{} (horário de Boa Vista)", fmt_boa_vista(d.q.departure_at)),
         flight_info: winner.flight_info.clone(),
         price: format_brl(winner.total_price_cents),
-        issued_at: issued_at.format("%d/%m/%Y %H:%M UTC").to_string(),
+        issued_at: format!("{} (horário de Boa Vista)", fmt_boa_vista(issued_at)),
     };
     Ok(Html(template.render().map_err(|e| ApiError::Internal(e.to_string()))?))
 }
@@ -236,7 +241,7 @@ async fn report_page(
                     cnpj,
                     price: format_brl(p.total_price_cents),
                     flight_info: p.flight_info.clone(),
-                    submitted_at: p.submitted_at.format("%d/%m/%Y %H:%M:%S UTC").to_string(),
+                    submitted_at: fmt_boa_vista(p.submitted_at),
                 }
             })
             .collect(),
@@ -246,11 +251,13 @@ async fn report_page(
         os_number: d.os.as_ref().map(|(n, _)| n.clone()).unwrap_or_default(),
         ticket_line,
         audit_ok: audit["ok"] == json!(true),
+        // Audit timeline stays UTC on purpose: forensic convention matching the
+        // hash-chained 'at' values (intentional exception to the Boa Vista UX rule).
         timeline: events
             .iter()
             .map(|e| ReportEvent { seq: e.seq, at: e.at.clone(), event_type: e.event_type.clone() })
             .collect(),
-        generated_at: Utc::now().format("%d/%m/%Y %H:%M UTC").to_string(),
+        generated_at: format!("{} (horário de Boa Vista)", fmt_boa_vista(Utc::now())),
     };
     Ok(Html(template.render().map_err(|e| ApiError::Internal(e.to_string()))?))
 }

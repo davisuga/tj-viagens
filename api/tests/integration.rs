@@ -885,4 +885,32 @@ async fn report_metrics_and_printable_pages_after_completed_flow() {
     assert_eq!(metrics["totalSavedCents"], 35100);
     assert_eq!(metrics["avgParticipants"], 2.0);
     assert_eq!(metrics["ticketsOnTimePct"], 100.0);
+
+    // printable pages render Boa Vista local time
+    let report_page_html = app
+        .client
+        .get(format!("{}/quotations/{id}/report", app.base))
+        .bearer_auth(&staff_token)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(report_page_html.contains("horário de Boa Vista"));
+
+    // dossier honors the lazy close (R4): a lapsed-OPEN quotation reports CLOSED
+    let stale_id = common::create_open_quotation(&app, &staff_token).await;
+    common::time_travel_past_close(&app.pool, &stale_id).await;
+    let stale_report: serde_json::Value = app
+        .client
+        .get(format!("{}/quotations/{stale_id}/report.json", app.base))
+        .bearer_auth(&staff_token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(stale_report["quotation"]["status"], "CLOSED");
 }
