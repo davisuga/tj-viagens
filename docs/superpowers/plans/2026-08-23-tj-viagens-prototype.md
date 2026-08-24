@@ -3804,6 +3804,9 @@ git commit -m "feat(api): e-ticket upload with deterministic divergence check, l
 
 ### Task 10: Dossier (JSON), KPI metrics, printable OS + report pages (askama), tracing
 
+> **As built (execution record — commits `7e3db89` + `62b18c8`; supersedes the blocks below where they differ):**
+> Printable pages render Boa Vista local time via `fmt_boa_vista` (OS departure/issued + report generated_at with "(horário de Boa Vista)" suffix; proposals column header "Enviada em (Boa Vista)"); the audit timeline intentionally stays UTC (forensic convention, commented). `load_dossier` goes through `load_quotation` so a lapsed-OPEN quotation reports CLOSED (R4) — the lazy close fired from a report pull commits before the same response's timeline/verify queries run. Fix-forwards: `use askama::Template;` in reports.rs; `#[allow(clippy::type_complexity)]` on Dossier. XSS-probed: filename/flight_info render escaped (askama auto-escape, no |safe anywhere). No endpoint serves uploaded file bytes.
+
 **Files:**
 - Modify: `api/Cargo.toml`, `api/src/main.rs`, `api/src/lib.rs`
 - Fill: `api/src/html.rs`
