@@ -199,3 +199,57 @@ pub async fn time_travel_past_close(pool: &PgPool, quotation_id: &str) {
         .await
         .unwrap();
 }
+
+/// Full path to AWARDED: 2 active suppliers bid, window closes, lowest wins.
+/// Returns (quotation_id, winner_email, winner_price_cents).
+pub async fn setup_awarded(app: &TestApp, staff_token: &str) -> (String, &'static str, i64) {
+    create_supplier(&app.pool, "11222333000181", "a@example.com", "ACTIVE", "Voa Roraima").await;
+    create_supplier(&app.pool, "11444777000161", "b@example.com", "ACTIVE", "Amazônia Viagens").await;
+    let id = create_open_quotation(app, staff_token).await;
+    for (email, price) in [("a@example.com", 152300i64), ("b@example.com", 149900)] {
+        let token = login(app, email).await;
+        let res = app
+            .client
+            .post(format!("{}/quotations/{id}/proposals", app.base))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({ "totalPriceCents": price, "flightInfo": "G3-1720 08:15" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 201);
+    }
+    time_travel_past_close(&app.pool, &id).await;
+    let ranking: serde_json::Value = app
+        .client
+        .get(format!("{}/quotations/{id}/ranking", app.base))
+        .bearer_auth(staff_token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let winner_proposal = ranking["ranking"][0]["proposalId"].as_str().unwrap();
+    let award = app
+        .client
+        .post(format!("{}/quotations/{id}/award", app.base))
+        .bearer_auth(staff_token)
+        .json(&serde_json::json!({ "proposalId": winner_proposal, "justification": "Menor preço" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(award.status(), 200);
+    (id, "b@example.com", 149900)
+}
+
+pub fn ticket_form(passenger: &str, departure: &str, price_cents: i64) -> reqwest::multipart::Form {
+    reqwest::multipart::Form::new()
+        .text("passengerName", passenger.to_string())
+        .text("flightInfo", "G3-1720 08:15")
+        .text("departureAt", departure.to_string())
+        .text("priceCents", price_cents.to_string())
+        .part(
+            "file",
+            reqwest::multipart::Part::bytes(b"%PDF-1.4 fake ticket".to_vec()).file_name("eticket.pdf"),
+        )
+}

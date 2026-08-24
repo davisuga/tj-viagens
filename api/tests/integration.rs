@@ -670,3 +670,101 @@ async fn ranking_orders_lowest_first_with_tiebreak_then_award_starts_ticket_wind
     assert!(msg.contains("horário de Boa Vista"), "must state the timezone: {msg}");
     assert!(!msg.contains("+00:00"), "no raw UTC in supplier copy: {msg}");
 }
+
+#[tokio::test]
+async fn ticket_upload_divergences_late_flag_and_confirmation() {
+    let app = spawn_app().await;
+    common::create_staff(&app.pool, "servidor@tjrr.jus.br").await;
+    let staff_token = common::login(&app, "servidor@tjrr.jus.br").await;
+    let (id, winner_email, winner_price) = common::setup_awarded(&app, &staff_token).await;
+
+    // non-winner blocked
+    let loser_token = common::login(&app, "a@example.com").await;
+    let denied = app
+        .client
+        .post(format!("{}/quotations/{id}/ticket", app.base))
+        .bearer_auth(&loser_token)
+        .multipart(common::ticket_form("Maria da Silva", "2026-09-10T08:00:00Z", winner_price))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), 403);
+
+    // winner uploads clean ticket in time
+    let winner_token = common::login(&app, winner_email).await;
+    let clean: serde_json::Value = app
+        .client
+        .post(format!("{}/quotations/{id}/ticket", app.base))
+        .bearer_auth(&winner_token)
+        .multipart(common::ticket_form("MARIA DA SILVA", "2026-09-10T08:00:00Z", winner_price))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(clean["late"], false);
+    assert_eq!(clean["divergences"], json!([]));
+
+    // staff confirms -> COMPLETED
+    let confirm = app
+        .client
+        .post(format!("{}/quotations/{id}/ticket/confirm", app.base))
+        .bearer_auth(&staff_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(confirm.status(), 200);
+    let status: String = sqlx::query_scalar("SELECT status FROM quotations WHERE id = $1")
+        .bind(uuid::Uuid::parse_str(&id).unwrap())
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "COMPLETED");
+
+    // double-confirm loses with 422; single audit row each for upload + confirm
+    let again = app
+        .client
+        .post(format!("{}/quotations/{id}/ticket/confirm", app.base))
+        .bearer_auth(&staff_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(again.status(), 422);
+    for event in ["TICKET_UPLOADED", "TICKET_CONFIRMED"] {
+        let n: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM audit_events WHERE event_type = $1")
+                .bind(event)
+                .fetch_one(&app.pool)
+                .await
+                .unwrap();
+        assert_eq!(n, 1, "{event} must appear exactly once");
+    }
+}
+
+#[tokio::test]
+async fn ticket_late_and_divergent_price_are_flagged_not_rejected() {
+    let app = spawn_app().await;
+    common::create_staff(&app.pool, "servidor@tjrr.jus.br").await;
+    let staff_token = common::login(&app, "servidor@tjrr.jus.br").await;
+    let (id, winner_email, _) = common::setup_awarded(&app, &staff_token).await;
+    sqlx::query("UPDATE quotations SET ticket_deadline_at = now() - interval '1 second' WHERE id = $1")
+        .bind(uuid::Uuid::parse_str(&id).unwrap())
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    let winner_token = common::login(&app, winner_email).await;
+    let flagged: serde_json::Value = app
+        .client
+        .post(format!("{}/quotations/{id}/ticket", app.base))
+        .bearer_auth(&winner_token)
+        .multipart(common::ticket_form("Maria da Silva", "2026-09-10T08:00:00Z", 155000))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(flagged["late"], true);
+    assert_eq!(flagged["divergences"], json!(["VALOR_DIVERGENTE"]));
+}
