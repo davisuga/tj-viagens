@@ -90,6 +90,7 @@ export function Register() {
                 <Input
                   id={key}
                   type={key === 'password' ? 'password' : key === 'contactEmail' ? 'email' : 'text'}
+                  inputMode={key === 'cnpj' || key === 'phone' ? 'numeric' : undefined}
                   placeholder={placeholder}
                   value={form[key]}
                   onChange={set(key)}

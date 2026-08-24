@@ -8,7 +8,14 @@ import { AuthProvider } from './lib/auth';
 import './index.css';
 
 const queryClient = new QueryClient({
-  defaultOptions: { queries: { refetchOnWindowFocus: true, retry: 1 } },
+  // networkMode: 'always' — the default 'online' mode defers a failed query's
+  // retry/error to the browser's onlineManager and can pause it indefinitely
+  // (fetchStatus stuck 'paused', isError never true) if that manager's belief
+  // about connectivity ever disagrees with reality. This is a same-machine/
+  // intranet API with no offline-first requirement, so always attempt the
+  // request and let retry/error settle on its own regardless of perceived
+  // connectivity — what the isError gates below need to reliably fire.
+  defaultOptions: { queries: { refetchOnWindowFocus: true, retry: 1, networkMode: 'always' } },
 });
 
 createRoot(document.getElementById('root')!).render(

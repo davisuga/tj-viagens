@@ -55,12 +55,24 @@ export function SupplierHome() {
       await api('/suppliers/me/documents', { method: 'POST', form });
       toast.success('Documento enviado.');
       setFile(null);
+      setValidUntil('');
       await queryClient.invalidateQueries({ queryKey: ['me'] });
     } catch (err) {
       toast.error(errorMessage(err));
     } finally {
       setUploading(false);
     }
+  }
+
+  if (me.isError) {
+    return (
+      <Layout>
+        <div className="rounded-lg border bg-card p-6 text-center">
+          <p className="text-sm text-destructive">{errorMessage(me.error)}</p>
+          <Button className="mt-3" onClick={() => void me.refetch()}>Tentar novamente</Button>
+        </div>
+      </Layout>
+    );
   }
 
   if (!me.data) {
@@ -104,7 +116,7 @@ export function SupplierHome() {
               })}
             </ul>
             <form onSubmit={uploadDoc} className="space-y-2 border-t pt-3">
-              <Label>Enviar / atualizar documento</Label>
+              <p className="text-sm font-medium">Enviar / atualizar documento</p>
               {/* This project's Select (Fluid Functionalism) renders its own value
                   display from `placeholder` — it takes no children/SelectValue, and
                   each SelectItem needs its list `index` for the proximity-hover overlay. */}
@@ -122,7 +134,15 @@ export function SupplierHome() {
                 <Label htmlFor="validUntil">Válido até</Label>
                 <Input id="validUntil" type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} />
               </div>
-              <Input type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} required />
+              <div className="space-y-1.5">
+                <Label htmlFor="docFile">Arquivo do documento</Label>
+                <Input
+                  id="docFile"
+                  type="file"
+                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                  required
+                />
+              </div>
               <Button type="submit" disabled={uploading || !file} className="w-full md:w-auto">
                 {uploading ? 'Enviando…' : 'Enviar documento'}
               </Button>

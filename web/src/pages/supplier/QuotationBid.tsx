@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Countdown } from '@/components/Countdown';
@@ -18,10 +18,12 @@ import type { SupplierQuotation } from '@/lib/types';
 export function SupplierQuotationPage() {
   const { id = '' } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
-  const { data: q } = useQuery({
+  const quotationQuery = useQuery({
     queryKey: ['quotation', id],
     queryFn: () => api<SupplierQuotation>(`/quotations/${id}`),
+    refetchInterval: 15000,
   });
+  const q = quotationQuery.data;
 
   useEffect(() => {
     return subscribeQuotation(id, (event) => {
@@ -37,6 +39,20 @@ export function SupplierQuotationPage() {
   const [pending, setPending] = useState(false);
   const [ticketPrice, setTicketPrice] = useState('');
   const [ticketFile, setTicketFile] = useState<File | null>(null);
+
+  // Pre-fill from the registered proposal exactly once per proposal id, so
+  // "Substituir proposta" edits start from what is on file (and a blank
+  // resubmit can't silently wipe the notes). Later refetches never clobber typing.
+  const hydratedProposalId = useRef<string | null>(null);
+  useEffect(() => {
+    const mine = q?.myProposal;
+    if (mine && hydratedProposalId.current !== mine.id) {
+      hydratedProposalId.current = mine.id;
+      setPrice((mine.totalPriceCents / 100).toFixed(2).replace('.', ','));
+      setFlightInfo(mine.flightInfo);
+      setNotes(mine.notes ?? '');
+    }
+  }, [q?.myProposal]);
 
   async function submitBid(e: FormEvent) {
     e.preventDefault();
@@ -88,6 +104,19 @@ export function SupplierQuotationPage() {
     } finally {
       setPending(false);
     }
+  }
+
+  if (quotationQuery.isError) {
+    return (
+      <Layout>
+        <div className="rounded-lg border bg-card p-6 text-center">
+          <p className="text-sm text-destructive">{errorMessage(quotationQuery.error)}</p>
+          <Button className="mt-3" onClick={() => void quotationQuery.refetch()}>
+            Tentar novamente
+          </Button>
+        </div>
+      </Layout>
+    );
   }
 
   if (!q) {
