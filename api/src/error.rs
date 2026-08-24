@@ -39,7 +39,7 @@ impl IntoResponse for ApiError {
             ),
             ApiError::Conflict(code) => (StatusCode::CONFLICT, json!({ "error": code })),
             ApiError::Internal(msg) => {
-                eprintln!("internal error: {msg}");
+                tracing::error!(%msg, "internal error");
                 (StatusCode::INTERNAL_SERVER_ERROR, json!({ "error": "ERRO_INTERNO" }))
             }
         };

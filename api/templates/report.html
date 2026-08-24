@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Relatório {{ code }}</title>
+<style>
+  body { font-family: Georgia, serif; max-width: 760px; margin: 2rem auto; color: #111; }
+  h1 { font-size: 1.3rem; color: #1e3a8a; text-align: center; }
+  h2 { font-size: 0.95rem; text-transform: uppercase; color: #555; border-bottom: 1px solid #ddd; margin-top: 1.6rem; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
+  th, td { padding: 0.35rem 0.5rem; text-align: left; border-bottom: 1px solid #eee; }
+  th { color: #555; font-weight: normal; }
+  .economy { background: #f0fdf4; border: 1px solid #bbf7d0; padding: 1rem; border-radius: 8px;
+             font-size: 1.2rem; color: #14532d; }
+  .audit-ok { color: #14532d; } .audit-bad { color: #b91c1c; }
+  .print-btn { position: fixed; top: 1rem; right: 1rem; padding: 0.6rem 1.2rem;
+               background: #1e3a8a; color: #fff; border: 0; border-radius: 6px; cursor: pointer; }
+  @media print { .print-btn { display: none; } body { margin: 0; } }
+</style>
+</head>
+<body>
+<button class="print-btn" onclick="window.print()">Imprimir / Salvar PDF</button>
+<h1>Relatório da Cotação {{ code }}</h1>
+<p style="text-align:center">Status {{ status }} · Gerado em {{ generated_at }}</p>
+<h2>Demanda</h2>
+<table>
+  <tr><th>Trecho</th><td>{{ origin }} → {{ destination }}</td></tr>
+  <tr><th>Passageiro</th><td>{{ passenger_name }} (CPF {{ passenger_cpf_masked }})</td></tr>
+  <tr><th>Preço de referência</th><td>{{ reference_price }}</td></tr>
+  <tr><th>Fornecedores notificados</th><td>{{ notified }}</td></tr>
+</table>
+<h2>Propostas (menor → maior)</h2>
+<table>
+  <tr><th>#</th><th>Fornecedor</th><th>CNPJ</th><th>Valor</th><th>Voo</th><th>Enviada em</th></tr>
+  {% for p in proposals %}
+  <tr>
+    <td>{{ p.position }}º</td><td>{{ p.supplier }}</td><td>{{ p.cnpj }}</td>
+    <td>{{ p.price }}</td><td>{{ p.flight_info }}</td><td>{{ p.submitted_at }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% if has_economy %}
+<h2>Economicidade</h2>
+<p class="economy">Economia obtida: <strong>{{ economy_saved }}</strong> ({{ economy_pct }}% abaixo da referência)
+· Ordem de Serviço {{ os_number }}</p>
+{% endif %}
+<h2>E-ticket</h2>
+<p>{{ ticket_line }}</p>
+<h2>Trilha de auditoria</h2>
+<p>
+  {% if audit_ok %}<span class="audit-ok">✔ Cadeia de hashes íntegra</span>
+  {% else %}<span class="audit-bad">✘ VIOLAÇÃO detectada na cadeia de hashes</span>{% endif %}
+</p>
+<table>
+  <tr><th>#</th><th>Quando (UTC)</th><th>Evento</th></tr>
+  {% for e in timeline %}
+  <tr><td>{{ e.seq }}</td><td>{{ e.at }}</td><td>{{ e.event_type }}</td></tr>
+  {% endfor %}
+</table>
+</body>
+</html>

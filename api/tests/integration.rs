@@ -787,3 +787,102 @@ async fn ticket_late_and_divergent_price_are_flagged_not_rejected() {
     assert_eq!(flagged["late"], true);
     assert_eq!(flagged["divergences"], json!(["VALOR_DIVERGENTE"]));
 }
+
+#[tokio::test]
+async fn report_metrics_and_printable_pages_after_completed_flow() {
+    let app = spawn_app().await;
+    common::create_staff(&app.pool, "servidor@tjrr.jus.br").await;
+    let staff_token = common::login(&app, "servidor@tjrr.jus.br").await;
+    let (id, winner_email, winner_price) = common::setup_awarded(&app, &staff_token).await;
+    let winner_token = common::login(&app, winner_email).await;
+    app.client
+        .post(format!("{}/quotations/{id}/ticket", app.base))
+        .bearer_auth(&winner_token)
+        .multipart(common::ticket_form("Maria da Silva", "2026-09-10T08:00:00Z", winner_price))
+        .send()
+        .await
+        .unwrap();
+    app.client
+        .post(format!("{}/quotations/{id}/ticket/confirm", app.base))
+        .bearer_auth(&staff_token)
+        .send()
+        .await
+        .unwrap();
+
+    let report: serde_json::Value = app
+        .client
+        .get(format!("{}/quotations/{id}/report.json", app.base))
+        .bearer_auth(&staff_token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(report["quotation"]["status"], "COMPLETED");
+    assert_eq!(report["economy"]["saved_cents"], 35100);
+    assert_eq!(report["economy"]["saved_pct"], 18.97);
+    assert_eq!(report["notifiedSuppliers"], 2);
+    assert_eq!(report["quotation"]["passengerCpfMasked"], "***.456.789-**");
+    assert_eq!(report["serviceOrder"]["number"], "OS-2026-0001");
+    assert!(report["timeline"].as_array().unwrap().len() >= 6);
+
+    // printable OS: staff ok, winner ok (via ?token=), loser 403
+    let os_staff = app
+        .client
+        .get(format!("{}/quotations/{id}/service-order", app.base))
+        .bearer_auth(&staff_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(os_staff.status(), 200);
+    let os_html = os_staff.text().await.unwrap();
+    assert!(os_html.contains("OS-2026-0001"));
+    assert!(os_html.contains("Maria da Silva"));
+
+    let os_winner = app
+        .client
+        .get(format!("{}/quotations/{id}/service-order?token={winner_token}", app.base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(os_winner.status(), 200);
+
+    let loser_token = common::login(&app, "a@example.com").await;
+    let os_loser = app
+        .client
+        .get(format!("{}/quotations/{id}/service-order?token={loser_token}", app.base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(os_loser.status(), 403);
+
+    // printable report page renders with economy + audit badge
+    let report_page = app
+        .client
+        .get(format!("{}/quotations/{id}/report", app.base))
+        .bearer_auth(&staff_token)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(report_page.contains("Economia obtida"));
+    assert!(report_page.contains("Cadeia de hashes íntegra"));
+
+    let metrics: serde_json::Value = app
+        .client
+        .get(format!("{}/metrics/summary", app.base))
+        .bearer_auth(&staff_token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(metrics["awardedCount"], 1);
+    assert_eq!(metrics["totalSavedCents"], 35100);
+    assert_eq!(metrics["avgParticipants"], 2.0);
+    assert_eq!(metrics["ticketsOnTimePct"], 100.0);
+}

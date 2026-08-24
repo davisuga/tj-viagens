@@ -54,6 +54,11 @@ pub fn app(state: App) -> Router {
         .route("/time", get(time_now))
         .merge(routes::router())
         .layer(cors)
+        .layer(tower_http::trace::TraceLayer::new_for_http().make_span_with(
+            |req: &axum::http::Request<axum::body::Body>| {
+                tracing::info_span!("http", method = %req.method(), path = %req.uri().path())
+            },
+        ))
         .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024))
         .with_state(state)
 }

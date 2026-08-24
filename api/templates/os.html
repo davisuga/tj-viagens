@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Ordem de Serviço {{ number }}</title>
+<style>
+  body { font-family: Georgia, serif; max-width: 720px; margin: 2rem auto; color: #111; }
+  header { text-align: center; border-bottom: 3px double #1e3a8a; padding-bottom: 1rem; }
+  h1 { font-size: 1.1rem; letter-spacing: 0.05em; margin: 0; }
+  h2 { font-size: 1.4rem; color: #1e3a8a; margin: 0.4rem 0 0; }
+  section { margin-top: 1.5rem; }
+  h3 { font-size: 0.9rem; text-transform: uppercase; color: #555; border-bottom: 1px solid #ddd; }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 0.3rem 0; vertical-align: top; }
+  td:first-child { width: 12rem; color: #555; }
+  .price { font-size: 1.3rem; font-weight: bold; color: #14532d; }
+  .print-btn { position: fixed; top: 1rem; right: 1rem; padding: 0.6rem 1.2rem;
+               background: #1e3a8a; color: #fff; border: 0; border-radius: 6px; cursor: pointer; }
+  @media print { .print-btn { display: none; } body { margin: 0; } }
+</style>
+</head>
+<body>
+<button class="print-btn" onclick="window.print()">Imprimir / Salvar PDF</button>
+<header>
+  <h1>TRIBUNAL DE JUSTIÇA DE RORAIMA</h1>
+  <h2>ORDEM DE SERVIÇO {{ number }}</h2>
+  <p>Cotação {{ code }} · Emitida em {{ issued_at }}</p>
+</header>
+<section>
+  <h3>Fornecedor vencedor</h3>
+  <table>
+    <tr><td>Razão social</td><td>{{ supplier_name }}</td></tr>
+    <tr><td>CNPJ</td><td>{{ supplier_cnpj }}</td></tr>
+  </table>
+</section>
+<section>
+  <h3>Dados do passageiro</h3>
+  <table>
+    <tr><td>Nome</td><td>{{ passenger_name }}</td></tr>
+    <tr><td>CPF</td><td>{{ passenger_cpf }}</td></tr>
+    <tr><td>Sexo</td><td>{{ passenger_sex }}</td></tr>
+    <tr><td>Nascimento</td><td>{{ passenger_birth }}</td></tr>
+  </table>
+</section>
+<section>
+  <h3>Serviço contratado</h3>
+  <table>
+    <tr><td>Trecho</td><td>{{ origin }} → {{ destination }}</td></tr>
+    <tr><td>Embarque</td><td>{{ departure_at }}</td></tr>
+    <tr><td>Voo ofertado</td><td>{{ flight_info }}</td></tr>
+    <tr><td>Valor contratado</td><td class="price">{{ price }}</td></tr>
+  </table>
+  <p>Prazo para envio do e-ticket: 30 minutos após a declaração da vencedora.</p>
+</section>
+</body>
+</html>
