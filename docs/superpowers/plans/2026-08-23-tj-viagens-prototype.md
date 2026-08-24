@@ -2918,6 +2918,9 @@ git commit -m "feat(api): quotations with secret reference price, active-supplie
 
 ### Task 7: Proposals — blind bids under the server-controlled window
 
+> **As built (execution record — commits `2e8bf7b` + `81d8ac0`; supersedes the blocks below where they differ):**
+> Input bounds added (price ≤ R$ 10M in cents, flight_info ≤ 200 chars, notes ≤ 2000 chars → 422). The upsert is `INSERT … SELECT … WHERE EXISTS (quotation OPEN AND closes_at > now())` — the DB re-checks the window at commit time (TOCTOU closed); `fetch_optional` None → COTACAO_FECHADA. `RETURNING (xmax = 0) AS inserted` distinguishes fresh submits (PROPOSAL_SUBMITTED) from revisions (PROPOSAL_REPLACED — same entity_id links history); audit payload also carries `notes`. COUNT runs inside the tx (publish order follows commit order). Test additionally asserts: 3 atomic audit rows for 3 concurrent bids, 1 PROPOSAL_REPLACED after revision, absurd price 422, /audit/verify ok.
+
 **Files:**
 - Replace: `api/src/routes/proposals.rs`
 - Modify: `api/tests/integration.rs`
@@ -3122,6 +3125,8 @@ git commit -m "feat(api): blind proposal submission with upsert-replace and serv
 ---
 
 ### Task 8: Ranking (lowest first) + award + OS number + 30-min ticket window
+
+> **As built (execution record — commit `5b4ee7a` + follow-up):** implemented as specified below (the atomic single-shot award was pre-baked into this plan). Follow-up adds `position` + `lowestPriceCents` (ints) to the QUOTATION_AWARDED payload so the dossier's decision event self-evidently shows whether the lowest bid won, with test assertions. Note: `NAO_ESTA_FECHADA` doubles as the double-award loser code (consistent with open()'s convention); a supplier hitting /ranking gets 403 from the Staff extractor (no dedicated test — covered by extractor behavior exercised elsewhere).
 
 **Files:**
 - Replace: `api/src/routes/award.rs`
