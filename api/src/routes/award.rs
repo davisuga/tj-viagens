@@ -124,6 +124,8 @@ async fn award(
         .bind(Uuid::new_v4()).bind(id).bind(&os_number)
         .execute(&mut *tx)
         .await?;
+    let position = proposals.iter().position(|p| p.id == winner.id).map(|i| i as i64 + 1);
+    let lowest_price_cents = proposals.first().map(|p| p.total_price_cents);
     append_audit_tx(&mut tx, AuditInput {
         actor_id: Some(claims.sub),
         actor_role: Some(claims.role.as_str()),
@@ -135,6 +137,8 @@ async fn award(
             "proposalId": winner.id.to_string(),
             "supplierId": winner.supplier_id.to_string(),
             "totalPriceCents": winner.total_price_cents,
+            "position": position,
+            "lowestPriceCents": lowest_price_cents,
             "justification": body.justification
         }),
     })

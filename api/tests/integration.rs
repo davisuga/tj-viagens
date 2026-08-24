@@ -651,6 +651,14 @@ async fn ranking_orders_lowest_first_with_tiebreak_then_award_starts_ticket_wind
     .await
     .unwrap();
     assert_eq!(award_events, 1);
+    let award_payload: serde_json::Value = sqlx::query_scalar(
+        "SELECT payload FROM audit_events WHERE event_type = 'QUOTATION_AWARDED'",
+    )
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(award_payload["position"], 1, "dossier shows the lowest bid won");
+    assert_eq!(award_payload["lowestPriceCents"], 149900);
 
     // winner notification copy is Boa Vista local, never raw UTC
     let msg: String = sqlx::query_scalar(
