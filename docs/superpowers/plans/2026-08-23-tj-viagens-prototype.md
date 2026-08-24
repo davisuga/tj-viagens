@@ -4494,6 +4494,9 @@ git commit -m "feat(api): json dossier, kpi metrics, printable os/report pages (
 
 ### Task 11: SSE route + full multi-supplier flow test
 
+> **As built (execution record — commits `487ab77` + `c76c2f8`; supersedes below where different):**
+> The events route validates the quotation via `load_quotation` BEFORE subscribing (unknown id → 404; bounds the channels map against authenticated random-uuid growth; lazy close applies on subscribe). Return type `ApiResult<Sse<...>>`. Adversarially probed: a losing supplier's stream across the entire flow carries only status/count/serverNow — no prices, PII, or divergences. Accepted: per-subscriber 5s tick timers (trivial at scale), KeepAlive dormant behind ticks, Lagged receivers silently skipped (64-slot ring ≫ demo volume).
+
 **Files:**
 - Modify: `api/src/sse.rs`, `api/src/lib.rs`, `api/Cargo.toml`
 - Modify: `api/tests/integration.rs`
