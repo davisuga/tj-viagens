@@ -80,14 +80,14 @@ pub async fn load_quotation(
 }
 
 /// Atomic sequential codes: COT-2026-0001, OS-2026-0001.
-pub async fn next_code(pool: &PgPool, prefix: &str) -> ApiResult<String> {
+pub async fn next_code<'e, E: sqlx::PgExecutor<'e>>(executor: E, prefix: &str) -> ApiResult<String> {
     let key = format!("{prefix}-{}", Utc::now().format("%Y"));
     let value: i64 = sqlx::query_scalar(
         "INSERT INTO counters (id, value) VALUES ($1, 1) \
          ON CONFLICT (id) DO UPDATE SET value = counters.value + 1 RETURNING value",
     )
     .bind(&key)
-    .fetch_one(pool)
+    .fetch_one(executor)
     .await?;
     Ok(format!("{key}-{value:04}"))
 }

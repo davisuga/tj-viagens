@@ -544,3 +544,121 @@ async fn proposals_concurrent_bids_replacement_and_window_enforcement() {
         .unwrap();
     assert_eq!(audit["ok"], true);
 }
+
+#[tokio::test]
+async fn ranking_orders_lowest_first_with_tiebreak_then_award_starts_ticket_window() {
+    let app = spawn_app().await;
+    common::create_staff(&app.pool, "servidor@tjrr.jus.br").await;
+    let staff_token = common::login(&app, "servidor@tjrr.jus.br").await;
+    common::create_supplier(&app.pool, "11222333000181", "a@example.com", "ACTIVE", "Voa Roraima").await;
+    common::create_supplier(&app.pool, "11444777000161", "b@example.com", "ACTIVE", "Amazônia Viagens").await;
+    let c_id = common::create_supplier(&app.pool, "12345678000195", "c@example.com", "ACTIVE", "Rio Branco Tur").await;
+    let id = common::create_open_quotation(&app, &staff_token).await;
+
+    for (email, price) in [("a@example.com", 152300i64), ("b@example.com", 149900), ("c@example.com", 149900)] {
+        let token = common::login(&app, email).await;
+        let res = app
+            .client
+            .post(format!("{}/quotations/{id}/proposals", app.base))
+            .bearer_auth(&token)
+            .json(&json!({ "totalPriceCents": price, "flightInfo": "G3-1720 08:15" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 201);
+    }
+    // deterministic tie-break: c submitted a minute earlier than b
+    sqlx::query(
+        "UPDATE proposals SET submitted_at = now() - interval '1 minute' \
+         WHERE quotation_id = $1 AND supplier_id = $2",
+    )
+    .bind(uuid::Uuid::parse_str(&id).unwrap())
+    .bind(c_id)
+    .execute(&app.pool)
+    .await
+    .unwrap();
+
+    // ranking refused while open
+    let early = app
+        .client
+        .get(format!("{}/quotations/{id}/ranking", app.base))
+        .bearer_auth(&staff_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(early.status(), 422);
+
+    common::time_travel_past_close(&app.pool, &id).await;
+    let ranking: serde_json::Value = app
+        .client
+        .get(format!("{}/quotations/{id}/ranking", app.base))
+        .bearer_auth(&staff_token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let names: Vec<&str> = ranking["ranking"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["supplier"]["legalName"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["Rio Branco Tur", "Amazônia Viagens", "Voa Roraima"]);
+    assert_eq!(ranking["ranking"][0]["deltaFromReferenceCents"], 149900 - 185000);
+
+    let winner_proposal = ranking["ranking"][0]["proposalId"].as_str().unwrap();
+    let before = chrono::Utc::now();
+    let award: serde_json::Value = app
+        .client
+        .post(format!("{}/quotations/{id}/award", app.base))
+        .bearer_auth(&staff_token)
+        .json(&json!({ "proposalId": winner_proposal, "justification": "Menor preço e conformidade" }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(award["serviceOrder"]["number"], "OS-2026-0001");
+    let deadline: chrono::DateTime<chrono::Utc> =
+        award["ticketDeadlineAt"].as_str().unwrap().parse().unwrap();
+    let minutes = (deadline - before).num_minutes();
+    assert!((29..=31).contains(&minutes), "ticket window must be ~30 min, got {minutes}");
+
+    let status: String = sqlx::query_scalar("SELECT status FROM quotations WHERE id = $1")
+        .bind(uuid::Uuid::parse_str(&id).unwrap())
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "AWARDED");
+
+    // single-shot: a second award (double-click) loses with 422, exactly one audit row
+    let again = app
+        .client
+        .post(format!("{}/quotations/{id}/award", app.base))
+        .bearer_auth(&staff_token)
+        .json(&json!({ "proposalId": winner_proposal, "justification": "Menor preço e conformidade" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(again.status(), 422);
+    let award_events: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM audit_events WHERE event_type = 'QUOTATION_AWARDED'",
+    )
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(award_events, 1);
+
+    // winner notification copy is Boa Vista local, never raw UTC
+    let msg: String = sqlx::query_scalar(
+        "SELECT message FROM notifications WHERE kind = 'VENCEDORA' LIMIT 1",
+    )
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert!(msg.contains("horário de Boa Vista"), "must state the timezone: {msg}");
+    assert!(!msg.contains("+00:00"), "no raw UTC in supplier copy: {msg}");
+}
