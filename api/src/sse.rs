@@ -31,6 +31,7 @@ use futures::StreamExt;
 use serde_json::json;
 
 use crate::auth::AuthUser;
+use crate::error::{ApiError, ApiResult};
 
 /// R4: live countdown/state. Auth via ?token= (EventSource cannot set headers).
 /// Emits: hello {serverNow} once, tick {serverNow} every 5s, plus published
@@ -39,7 +40,12 @@ async fn events(
     State(state): State<App>,
     AuthUser(_claims): AuthUser,
     Path(id): Path<Uuid>,
-) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
+) -> ApiResult<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>> {
+    // Only real quotations get a channel — otherwise any authenticated user could
+    // grow the channels map with random UUIDs (8-10KB per broadcast ring).
+    crate::routes::quotations::load_quotation(&state, id, Utc::now())
+        .await?
+        .ok_or(ApiError::NotFound("NAO_ENCONTRADA"))?;
     let receiver = channel_for(&state, id).subscribe();
     let hello = futures::stream::once(async {
         Ok(Event::default()
@@ -61,7 +67,7 @@ async fn events(
             .data(json!({ "serverNow": Utc::now().to_rfc3339() }).to_string()))
     });
     let stream = hello.chain(futures::stream::select(updates, ticks));
-    Sse::new(stream).keep_alive(KeepAlive::default())
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
 pub fn router() -> Router<App> {

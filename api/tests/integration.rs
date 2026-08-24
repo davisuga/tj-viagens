@@ -976,6 +976,16 @@ async fn sse_stream_delivers_hello_then_proposal_count() {
         .await
         .unwrap();
     assert_eq!(anon.status(), 401);
+
+    // unknown quotation id -> 404, no channel created
+    let ghost = uuid::Uuid::new_v4();
+    let not_found = app
+        .client
+        .get(format!("{}/quotations/{ghost}/events?token={staff_token}", app.base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(not_found.status(), 404);
 }
 
 #[tokio::test]
