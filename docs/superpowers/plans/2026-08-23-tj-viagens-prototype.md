@@ -5343,6 +5343,9 @@ git commit -m "feat(web): vite + tailwind4 + shadcn + fluid functionalism scaffo
 
 ### Task 13: Supplier area — register, home (docs + notifications + open cotações), single-task bid screen
 
+> **As built (execution record — commits `d579af1` + `4da1bc7`; supersedes below where different):**
+> FF component APIs: Button `variant="tertiary"` (no "outline"); Select has NO `SelectValue` — use `<SelectTrigger placeholder=… />` and `<SelectItem index={i} …>`. Step-0 hardening landed here: tsconfig strict, parseJwt exp check, api() 401→signOut+redirect, lib/errors.ts (30-code PT dictionary, `errorMessage()`), Countdown fired-once guard, subscribeQuotation 'closed' event. Both pages have isError→retry cards (plus `networkMode: 'always'` in main.tsx — the TanStack default 'online' PAUSES instead of erroring on connectivity blips, an eternal-Carregando demo-killer). Bid form rehydrates once per proposal id from myProposal (prevents notes wipe on replace); quotation query has refetchInterval 15s as SSE fallback; price inputs show live `= R$ …` parse preview; a11y touches (file input label, inputMode numeric).
+
 **Files:**
 - Create: `web/src/lib/types.ts`, `web/src/pages/Register.tsx`, `web/src/pages/supplier/Home.tsx`, `web/src/pages/supplier/QuotationBid.tsx`
 - Replace: `web/src/App.tsx`
