@@ -8,12 +8,24 @@ use tj_viagens_api::db;
 use tj_viagens_api::routes::quotations::next_code;
 use uuid::Uuid;
 
+/// Keeps host and database name visible while dropping the credentials. Seed is
+/// run against deployed instances, where whatever it prints lands in deploy logs.
+fn redact_url(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url.to_string();
+    };
+    match rest.split_once('@') {
+        Some((_userinfo, host)) => format!("{scheme}://***@{host}"),
+        None => url.to_string(),
+    }
+}
+
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
     let config = Config::from_env();
     let pool = db::connect(&config.database_url).await;
-    println!("⚠ seed: limpando e repopulando {}", config.database_url);
+    println!("⚠ seed: limpando e repopulando {}", redact_url(&config.database_url));
     sqlx::query(
         "TRUNCATE users, suppliers, supplier_documents, quotations, proposals, \
          service_orders, tickets, notifications, audit_events, counters \

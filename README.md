@@ -6,6 +6,11 @@ referência sigiloso, janela de 1 hora controlada pelo relógio do servidor, sel
 preço, Ordem de Serviço automática, e-ticket em 30 minutos e trilha de auditoria com
 encadeamento de hashes.
 
+## Ambiente publicado
+
+**https://sh-tjviagens-74-208-159-201.sslip.io** — instância de demonstração com os dados
+semeados (credenciais abaixo). Detalhes de operação em [docs/DEPLOY.md](docs/DEPLOY.md).
+
 ## Stack
 
 - **API**: Rust · Axum · SQLx · PostgreSQL 16 · SSE · askama (OS e relatório imprimíveis)

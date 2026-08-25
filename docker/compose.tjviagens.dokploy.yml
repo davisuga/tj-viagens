@@ -1,0 +1,61 @@
+# Dokploy compose for the TJ-Viagens prototype (project "SH", env "production").
+#
+# Images are built and loaded onto the host by scripts/deploy.sh — never pulled,
+# never built here. `pull_policy: never` keeps compose from reaching for a
+# registry that has no copy of them.
+#
+# Secrets live in the Dokploy env store, not in this file. That store is
+# REPLACE-not-merge: read it before you write it or you will drop the rest.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tj
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_DB: tjviagens
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tj -d tjviagens"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    image: tj-viagens-api:${TAG}
+    pull_policy: never
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # sqlx::migrate! is compiled into the binary, so the schema applies itself
+      # on first boot against an empty volume.
+      DATABASE_URL: "postgresql://tj:${POSTGRES_PASSWORD}@db:5432/tjviagens"
+      JWT_SECRET: "${JWT_SECRET}"
+      PORT: "3001"
+      PROPOSAL_WINDOW_MINUTES: "${PROPOSAL_WINDOW_MINUTES:-60}"
+      TICKET_WINDOW_MINUTES: "${TICKET_WINDOW_MINUTES:-30}"
+      UPLOAD_DIR: /app/uploads
+      WEB_ORIGIN: "${WEB_ORIGIN}"
+      RUST_LOG: "info,tower_http=info"
+    volumes:
+      - uploads:/app/uploads
+    expose:
+      - "3001"
+
+  # Public entrypoint: static bundle + /api/ reverse proxy. Traefik terminates
+  # TLS in front of this and forwards plain HTTP.
+  web:
+    image: tj-viagens-web:${TAG}
+    pull_policy: never
+    restart: unless-stopped
+    depends_on:
+      - api
+    expose:
+      - "80"
+
+volumes:
+  pgdata:
+  uploads:
