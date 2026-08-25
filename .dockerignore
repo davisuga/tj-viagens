@@ -1,0 +1,13 @@
+.git
+.github
+demo
+docs
+tema.pdf
+node_modules
+web/node_modules
+web/e2e
+api/target/debug
+api/target/release
+api/uploads
+**/.DS_Store
+**/.env

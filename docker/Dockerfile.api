@@ -1,0 +1,25 @@
+# Runtime-only image. The binary is cross-compiled on the workstation with
+# `cargo zigbuild --target x86_64-unknown-linux-gnu` — the VPS serves traffic and
+# must never spend its cores on a Rust build.
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --create-home --uid 10001 tj
+
+COPY api/target/x86_64-unknown-linux-gnu/release/api  /usr/local/bin/api
+COPY api/target/x86_64-unknown-linux-gnu/release/seed /usr/local/bin/seed
+
+RUN mkdir -p /app/uploads && chown -R tj:tj /app
+
+USER tj
+WORKDIR /app
+
+ENV PORT=3001 UPLOAD_DIR=/app/uploads RUST_LOG=info
+EXPOSE 3001
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=5 \
+    CMD curl -fsS http://127.0.0.1:3001/health || exit 1
+
+CMD ["api"]
