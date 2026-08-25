@@ -7298,6 +7298,8 @@ git commit -m "feat: demo seed with completed quotation, kpis and audit trail; r
 
 ### Task 16: Phase-2 pitch assets — canvas, 5-minute video script, recording checklist
 
+> **As built (execution record — commit `93f1fa9`):** three files verbatim, with two reality updates: checklist's demo:record item checked (17 shots + 3 clips, audit passed) and Ato IV narration carries the real recorded numbers (cotação R$ 351,00 / 18,97%; painel acumulado R$ 702,00, 2 adjudicadas, média 2,5 participantes, 100% no prazo).
+
 **Files:**
 - Create: `docs/pitch/canvas.md`, `docs/pitch/roteiro-video.md`, `docs/pitch/checklist-gravacao.md`
 
@@ -7444,6 +7446,8 @@ git commit -m "docs: phase-2 pitch canvas, 5-minute video script and recording c
 ---
 
 ### Task 17: Automated demo recording (Playwright) + visual self-audit
+
+> **As built (execution record — commits `93c45d3` + `9359af5`):** recorder runs clean under Bun (17 shots + 3 webm clips, zero errors). Script fixes vs the block below: waitForURL anchored to a UUID shape (else it matches /cotacoes/nova), waits for 'Credenciamento'/'Abrir cotação' before snapping (StrictMode double-mount flicker), `getByText('Concluída', { exact: true })`, `snap(page, name, fullPage)` with fullPage for the two printables. Controller vision audit (all 17 frames) PASSED after one polish round: PT status labels + comma-decimal % on the printable report, formatted CPF/date on staff header + winner card + OS, OS-number prefix dedup, price-cell nowrap. Evidence: demo/out (gitignored).
 
 Records the golden path as video clips (b-roll for Ato III) and screenshots every demo beat so the UI gets a vision review BEFORE the pitch is recorded. Runs after Tasks 12–15 (full app + seed).
 
