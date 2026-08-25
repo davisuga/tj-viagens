@@ -6,6 +6,9 @@
 - [x] `cd web && bun run demo:record` rodado — screenshots auditados e aprovados; clipes webm em
       `demo/out/video/` como b-roll do Ato III
 - [ ] Janela A: servidor logado no dashboard; Janela B: fornecedor em largura de celular
+- [x] Instância publicada em **https://sh-tjviagens-74-208-159-201.sslip.io** (mesmos dados
+      semeados) — serve de plano B se o ambiente local falhar na hora e como prova de que o
+      protótipo roda de verdade, não só na máquina do autor
 - [ ] Ensaiar o Ato III completo 2× — a demo tem 90s, sem improviso
 - [ ] Microfone testado: **áudio limpo vale mais que imagem 4K** (blueprint)
 - [ ] Cronômetro visível na gravação para não passar de 5:00
