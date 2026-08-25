@@ -145,7 +145,7 @@ export function StaffQuotationDetail() {
           <CardContent className="p-6 text-center">
             <p className="mb-3 text-sm text-muted-foreground">
               Ao abrir, todos os fornecedores credenciados ativos serão notificados simultaneamente
-              e a janela de propostas de 60 minutos começará a contar no horário do servidor.
+              e a janela de propostas começará a contar no horário oficial do servidor.
             </p>
             <Dialog>
               <DialogTrigger asChild>
@@ -156,7 +156,7 @@ export function StaffQuotationDetail() {
                   <DialogTitle>Abrir a disputa {q.code}?</DialogTitle>
                 </DialogHeader>
                 <p className="text-sm text-muted-foreground">
-                  A notificação é irreversível e o cronômetro de 60 minutos inicia imediatamente.
+                  A notificação é irreversível e o cronômetro oficial inicia imediatamente.
                 </p>
                 <DialogFooter>
                   <Button

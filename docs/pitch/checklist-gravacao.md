@@ -15,6 +15,8 @@
 - [ ] YouTube como **Público ou Não listado** (link Privado = zero por falha de acesso)
 - [ ] Vídeo mostra a interface interativa real (não apenas slides narrados)
 - [ ] Sem leitura de currículos — o protótipo é o protagonista
+- [ ] Não improvisar claims: o e-mail de notificação é um adaptador stub (console) no protótipo —
+      dizer "notificação no painel; e-mail via adaptador SMTP institucional na implantação"
 
 ## Submissão (antes de 14h de 26/08/2026)
 - [ ] Upload no YouTube concluído e processado

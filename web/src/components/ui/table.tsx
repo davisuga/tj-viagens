@@ -67,7 +67,7 @@ const Table = forwardRef<HTMLTableElement, TableProps>(
       <TableContext.Provider value={contextValue}>
         <div
           ref={containerRef}
-          className="relative"
+          className="relative overflow-x-auto"
           onMouseEnter={handlers.onMouseEnter}
           onMouseMove={handlers.onMouseMove}
           onMouseLeave={handlers.onMouseLeave}
