@@ -59,7 +59,7 @@ export function StaffSuppliers() {
 
   if (suppliers.isError) {
     return (
-      <Layout>
+      <Layout back>
         <div className="rounded-lg border bg-card p-6 text-center">
           <p className="text-sm text-destructive">{errorMessage(suppliers.error)}</p>
           <Button className="mt-3" onClick={() => void suppliers.refetch()}>
@@ -72,7 +72,7 @@ export function StaffSuppliers() {
 
   if (!suppliers.data) {
     return (
-      <Layout>
+      <Layout back>
         <p className="text-muted-foreground">Carregando…</p>
       </Layout>
     );
@@ -80,7 +80,7 @@ export function StaffSuppliers() {
   const rows = suppliers.data;
 
   return (
-    <Layout>
+    <Layout back>
       <Card>
         <CardHeader>
           <CardTitle>Credenciamento de fornecedores</CardTitle>

@@ -71,7 +71,7 @@ export function NewQuotation() {
   }
 
   return (
-    <Layout>
+    <Layout back>
       <Card className="mx-auto max-w-2xl">
         <CardHeader>
           <CardTitle>Nova demanda de passagem</CardTitle>
