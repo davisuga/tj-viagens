@@ -1,5 +1,5 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
-import { RequireRole } from '@/lib/auth';
+import { RequireRole, roleHome, useAuth } from '@/lib/auth';
 import { Login } from '@/pages/Login';
 import { Register } from '@/pages/Register';
 import { StaffDashboard } from '@/pages/staff/Dashboard';
@@ -10,6 +10,12 @@ import { SupplierHome } from '@/pages/supplier/Home';
 import { SupplierQuotationPage } from '@/pages/supplier/QuotationBid';
 
 const STAFF: Array<'SERVIDOR' | 'ADMIN'> = ['SERVIDOR', 'ADMIN'];
+
+/** Unknown URLs land at the signed-in user's home, not on the login form. */
+function CatchAll() {
+  const { user } = useAuth();
+  return <Navigate to={user ? roleHome(user) : '/login'} replace />;
+}
 
 export function App() {
   return (
@@ -64,7 +70,7 @@ export function App() {
           </RequireRole>
         }
       />
-      <Route path="*" element={<Navigate to="/login" replace />} />
+      <Route path="*" element={<CatchAll />} />
     </Routes>
   );
 }

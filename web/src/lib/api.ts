@@ -51,6 +51,9 @@ export function subscribeQuotation(id: string, onEvent: (event: string, data: un
     source.addEventListener(name, (e) => onEvent(name, JSON.parse((e as MessageEvent).data)));
   }
   source.onerror = () => {
+    // Any error means live updates are stale (the browser may still be
+    // auto-retrying); consumers surface this and fall back to polling.
+    onEvent('down', {});
     if (source.readyState === EventSource.CLOSED) onEvent('closed', {});
   };
   return () => source.close();

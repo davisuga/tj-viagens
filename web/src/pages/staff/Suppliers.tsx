@@ -1,20 +1,18 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { toast } from 'sonner';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Layout } from '@/components/Layout';
 import { StatusBadge } from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
-} from '@/components/ui/dialog';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { api } from '@/lib/api';
 import { errorMessage } from '@/lib/errors';
-import type { SupplierListItem } from '@/lib/types';
+import type { SupplierInfo, SupplierListItem } from '@/lib/types';
 
 // Fluid Functionalism Button has no "destructive" variant (primary/secondary/
 // tertiary/ghost). Its fill is painted by an internal absolutely-positioned
@@ -28,15 +26,20 @@ const DESTRUCTIVE_BUTTON = 'text-red-600 hover:text-red-700';
 
 export function StaffSuppliers() {
   const queryClient = useQueryClient();
-  const { data: rows } = useQuery({
+  const suppliers = useQuery({
     queryKey: ['suppliers'],
     queryFn: () => api<SupplierListItem[]>('/suppliers'),
   });
   const [pending, setPending] = useState(false);
+  const [approving, setApproving] = useState<SupplierInfo | null>(null);
   const [rejecting, setRejecting] = useState<string | null>(null);
   const [reason, setReason] = useState('');
 
-  async function decide(id: string, decision: 'APPROVE' | 'REJECT', why?: string) {
+  async function decide(
+    id: string,
+    decision: 'APPROVE' | 'REJECT',
+    why?: string,
+  ): Promise<boolean> {
     setPending(true);
     try {
       await api(`/suppliers/${id}/decision`, {
@@ -44,15 +47,37 @@ export function StaffSuppliers() {
         body: { decision, reason: why ?? null },
       });
       toast.success(decision === 'APPROVE' ? 'Fornecedor homologado.' : 'Credenciamento rejeitado.');
-      setRejecting(null);
-      setReason('');
       await queryClient.invalidateQueries({ queryKey: ['suppliers'] });
+      return true;
     } catch (err) {
       toast.error(errorMessage(err));
+      return false;
     } finally {
       setPending(false);
     }
   }
+
+  if (suppliers.isError) {
+    return (
+      <Layout>
+        <div className="rounded-lg border bg-card p-6 text-center">
+          <p className="text-sm text-destructive">{errorMessage(suppliers.error)}</p>
+          <Button className="mt-3" onClick={() => void suppliers.refetch()}>
+            Tentar novamente
+          </Button>
+        </div>
+      </Layout>
+    );
+  }
+
+  if (!suppliers.data) {
+    return (
+      <Layout>
+        <p className="text-muted-foreground">Carregando…</p>
+      </Layout>
+    );
+  }
+  const rows = suppliers.data;
 
   return (
     <Layout>
@@ -76,7 +101,7 @@ export function StaffSuppliers() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {(rows ?? []).map(({ supplier, checklist }, index) => (
+              {rows.map(({ supplier, checklist }, index) => (
                 <TableRow key={supplier.id} index={index}>
                   <TableCell>{supplier.legalName}</TableCell>
                   <TableCell>{supplier.cnpj}</TableCell>
@@ -94,7 +119,7 @@ export function StaffSuppliers() {
                         <Button
                           size="sm"
                           disabled={pending || !checklist.ok}
-                          onClick={() => void decide(supplier.id, 'APPROVE')}
+                          onClick={() => setApproving(supplier)}
                         >
                           Homologar
                         </Button>
@@ -114,7 +139,7 @@ export function StaffSuppliers() {
               ))}
             </TableBody>
           </Table>
-          {(rows ?? []).length === 0 && (
+          {rows.length === 0 && (
             <p className="p-4 text-center text-sm text-muted-foreground">
               Nenhuma solicitação de credenciamento ainda.
             </p>
@@ -122,28 +147,47 @@ export function StaffSuppliers() {
         </CardContent>
       </Card>
 
-      <Dialog open={rejecting !== null} onOpenChange={(open) => !open && setRejecting(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Justificativa da rejeição</DialogTitle>
-          </DialogHeader>
-          <Textarea
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="Ex.: Documentação fiscal vencida e não reapresentada."
-          />
-          <DialogFooter>
-            <Button
-              variant="tertiary"
-              className={DESTRUCTIVE_BUTTON}
-              disabled={pending || reason.trim().length < 5}
-              onClick={() => rejecting && void decide(rejecting, 'REJECT', reason)}
-            >
-              Confirmar rejeição
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog
+        open={approving !== null}
+        onOpenChange={(open) => !open && setApproving(null)}
+        title={approving ? `Homologar ${approving.legalName}?` : ''}
+        confirmLabel="Confirmar homologação"
+        pending={pending}
+        onConfirm={() =>
+          void (async () => {
+            if (approving && (await decide(approving.id, 'APPROVE'))) setApproving(null);
+          })()
+        }
+      >
+        <p className="text-sm text-muted-foreground">
+          O checklist documental está completo. Após a homologação, o fornecedor será notificado de
+          todas as novas cotações do TJRR.
+        </p>
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={rejecting !== null}
+        onOpenChange={(open) => !open && setRejecting(null)}
+        title="Justificativa da rejeição"
+        confirmLabel="Confirmar rejeição"
+        destructive
+        pending={pending}
+        confirmDisabled={reason.trim().length < 5}
+        onConfirm={() =>
+          void (async () => {
+            if (rejecting && (await decide(rejecting, 'REJECT', reason))) {
+              setRejecting(null);
+              setReason('');
+            }
+          })()
+        }
+      >
+        <Textarea
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="Ex.: Documentação fiscal vencida e não reapresentada."
+        />
+      </ConfirmDialog>
     </Layout>
   );
 }

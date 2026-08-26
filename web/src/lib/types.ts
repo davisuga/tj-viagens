@@ -86,7 +86,14 @@ export type SupplierListItem = { supplier: SupplierInfo; checklist: ChecklistInf
 
 export type Report = {
   quotation: { code: string; status: string; passengerName: string; passengerCpfMasked: string };
+  notifiedSuppliers: number;
   economy: { saved_cents: number; saved_pct: number } | null;
   serviceOrder: { number: string } | null;
-  ticket: { fileName: string; late: boolean; divergences: string[] } | null;
+  ticket: {
+    fileName: string;
+    late: boolean;
+    divergences: string[];
+    uploadedAt: string;
+    confirmedAt: string | null;
+  } | null;
 };
