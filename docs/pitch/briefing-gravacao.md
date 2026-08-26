@@ -112,8 +112,10 @@ funcional). Tela: diagrama dos 3 módulos.
    relógio do servidor que manda. Aproveite a espera para narrar o Ato II se precisar de
    fôlego, ou corte na edição.
 10. Fechou: aparece o **ranking do menor para o maior**, com a diferença contra a
-    referência, e a 1ª já **pré-selecionada**. Clique **Declarar vencedora e emitir OS** —
-    um clique só.
+    referência, e a 1ª já **pré-selecionada**. Abaixo do ranking há uma **justificativa já
+    preenchida** ("Menor preço entre as propostas válidas.") — não precisa digitar nada, mas
+    vale narrar que ela vai para a trilha de auditoria. Clique **Declarar vencedora e emitir
+    OS** → confirme no diálogo em **Confirmar adjudicação**.
 
 **Janela B — fornecedor 2 (vencedora)**
 
@@ -122,10 +124,12 @@ funcional). Tela: diagrama dos 3 módulos.
 
 **Janela A — servidor**
 
-12. Conferência lado a lado: **sem divergências**. Clique **Confirmar e concluir**.
+12. Conferência lado a lado: **sem divergências**. Clique **Confirmar e concluir** →
+    confirme no diálogo em **Concluir cotação**.
 13. Aparece o card de economia, o selo **"trilha de auditoria íntegra"** e os botões
     **Ordem de Serviço** e **Relatório**. Abra um dos dois e mostre a página imprimível
-    (dá para anexar no SEI). Repare que o CPF sai mascarado.
+    (dá para anexar no SEI). Repare que o CPF sai mascarado. A página abre **na mesma aba** —
+    use o **botão Voltar** do navegador para retornar, sem cortar para outra aba na gravação.
 
 ### Ato IV — 3:30 a 4:30 · o impacto
 Volte ao dashboard. Depois da demo os KPIs mostram:
