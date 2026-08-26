@@ -39,9 +39,11 @@ export async function api<T>(
   return res.json() as Promise<T>;
 }
 
-/** Opens a printable page (OS / relatório) in a new tab, authenticated via ?token=. */
+/** Opens a printable page (OS / relatório) in the SAME tab, authenticated via
+ *  ?token= — same-tab so a demo recording doesn't cut away to a new tab; the
+ *  browser's Back button returns to the app. */
 export function openPage(path: string): void {
-  window.open(`${apiUrl(path)}?token=${getToken()}`, '_blank');
+  location.href = `${apiUrl(path)}?token=${getToken()}`;
 }
 
 /** SSE subscription with react-query invalidation on events. Returns cleanup. */
