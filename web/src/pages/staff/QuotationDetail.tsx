@@ -141,7 +141,7 @@ export function StaffQuotationDetail() {
 
   if (quotationQuery.isError) {
     return (
-      <Layout>
+      <Layout back>
         <div className="rounded-lg border bg-card p-6 text-center">
           <p className="text-sm text-destructive">{errorMessage(quotationQuery.error)}</p>
           <Button className="mt-3" onClick={() => void quotationQuery.refetch()}>
@@ -154,7 +154,7 @@ export function StaffQuotationDetail() {
 
   if (!q) {
     return (
-      <Layout>
+      <Layout back>
         <p className="text-muted-foreground">Carregando…</p>
       </Layout>
     );
@@ -168,7 +168,7 @@ export function StaffQuotationDetail() {
   const ticket = report.data?.ticket ?? null;
 
   return (
-    <Layout>
+    <Layout back>
       <Card>
         <CardHeader>
           <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-lg">

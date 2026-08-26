@@ -1,10 +1,11 @@
 import type { ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/lib/auth';
 
-export function Layout({ children }: { children: ReactNode }) {
+export function Layout({ children, back = false }: { children: ReactNode; back?: boolean }) {
   const { user, signOut } = useAuth();
+  const navigate = useNavigate();
   const home = user?.role === 'FORNECEDOR' ? '/fornecedor' : '/';
   return (
     <div className="min-h-screen bg-muted/40">
@@ -25,7 +26,25 @@ export function Layout({ children }: { children: ReactNode }) {
           )}
         </div>
       </header>
-      <main className="mx-auto max-w-5xl p-3 md:p-4">{children}</main>
+      <main className="mx-auto max-w-5xl p-3 md:p-4">
+        {back && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="-ml-3 mb-2"
+            onClick={() => {
+              // react-router stamps an idx on each in-app history entry; at
+              // idx 0 (deep link / fresh tab) "back" would leave the app, so
+              // fall back to the role home instead.
+              if ((window.history.state?.idx ?? 0) > 0) navigate(-1);
+              else navigate(home);
+            }}
+          >
+            ← Voltar
+          </Button>
+        )}
+        {children}
+      </main>
     </div>
   );
 }
