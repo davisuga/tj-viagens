@@ -4,6 +4,7 @@ import { useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Countdown } from '@/components/Countdown';
 import { Layout } from '@/components/Layout';
+import { LivePill } from '@/components/LivePill';
 import { StatusBadge } from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,7 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { api, openPage, subscribeQuotation } from '@/lib/api';
-import { fmtCpf, fmtDateOnly, fmtDateTime, formatBRL, parseBRL } from '@/lib/domain';
+import { divergenceLabel, fmtCpf, fmtDateOnly, fmtDateTime, formatBRL, parseBRL } from '@/lib/domain';
 import { errorMessage } from '@/lib/errors';
 import type { SupplierQuotation } from '@/lib/types';
 
@@ -24,9 +25,15 @@ export function SupplierQuotationPage() {
     refetchInterval: 15000,
   });
   const q = quotationQuery.data;
+  const [liveDown, setLiveDown] = useState(false);
 
   useEffect(() => {
     return subscribeQuotation(id, (event) => {
+      if (event === 'down' || event === 'closed') {
+        setLiveDown(true);
+        return;
+      }
+      setLiveDown(false);
       if (event === 'status' || event === 'proposal') {
         void queryClient.invalidateQueries({ queryKey: ['quotation', id] });
       }
@@ -97,7 +104,10 @@ export function SupplierQuotationPage() {
         form,
       });
       if (res.divergences.length === 0) toast.success('E-ticket enviado sem divergências.');
-      else toast.warning(`E-ticket enviado com divergências: ${res.divergences.join(', ')}`);
+      else
+        toast.warning(
+          `E-ticket enviado com divergências: ${res.divergences.map(divergenceLabel).join('; ')}`,
+        );
       await queryClient.invalidateQueries({ queryKey: ['quotation', id] });
     } catch (err) {
       toast.error(errorMessage(err));
@@ -136,7 +146,10 @@ export function SupplierQuotationPage() {
             <span>
               {q.code} · {q.origin} → {q.destination}
             </span>
-            <StatusBadge status={q.status} />
+            <span className="flex flex-wrap items-center gap-2">
+              {liveDown && <LivePill />}
+              <StatusBadge status={q.status} />
+            </span>
           </CardTitle>
           <p className="text-sm text-muted-foreground">
             Embarque {fmtDateTime(q.departureAt)}
@@ -204,8 +217,8 @@ export function SupplierQuotationPage() {
                 <Label htmlFor="notes">Observações (bagagem, conexões…)</Label>
                 <Textarea id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
               </div>
-              <Button type="submit" className="w-full md:w-auto" disabled={pending}>
-                {pending ? 'Enviando…' : q.myProposal ? 'Substituir proposta' : 'Enviar proposta'}
+              <Button type="submit" className="w-full md:w-auto" loading={pending} disabled={pending}>
+                {q.myProposal ? 'Substituir proposta' : 'Enviar proposta'}
               </Button>
               <p className="text-xs text-muted-foreground">
                 Você não vê as propostas concorrentes nem o preço de referência do Tribunal — a
@@ -220,6 +233,26 @@ export function SupplierQuotationPage() {
         <Card className="mt-4">
           <CardContent className="p-6 text-center text-sm text-muted-foreground">
             Janela encerrada. Aguardando a declaração da vencedora pelo TJRR — você será notificado.
+          </CardContent>
+        </Card>
+      )}
+
+      {q.status === 'AWARDED' && !q.isWinner && (
+        <Card className="mt-4">
+          <CardContent className="space-y-2 p-6 text-center text-sm">
+            <p className="font-medium">Disputa encerrada</p>
+            <p className="text-muted-foreground">
+              A cotação foi adjudicada a outra proposta. Sua proposta não foi a selecionada desta
+              vez.
+            </p>
+            <p className="text-muted-foreground">
+              {q.myProposal
+                ? `Sua proposta: ${formatBRL(q.myProposal.totalPriceCents)} · registrada às ${fmtDateTime(q.myProposal.submittedAt)}.`
+                : 'Você não chegou a registrar proposta nesta cotação.'}
+            </p>
+            <p className="text-muted-foreground">
+              Agradecemos a participação — você continuará recebendo as próximas cotações do TJRR.
+            </p>
           </CardContent>
         </Card>
       )}
@@ -276,8 +309,13 @@ export function SupplierQuotationPage() {
                   required
                 />
               </div>
-              <Button type="submit" disabled={pending || !ticketFile} className="w-full md:w-auto">
-                {pending ? 'Enviando…' : 'Anexar e-ticket'}
+              <Button
+                type="submit"
+                loading={pending}
+                disabled={pending || !ticketFile}
+                className="w-full md:w-auto"
+              >
+                Anexar e-ticket
               </Button>
             </form>
           </CardContent>
@@ -289,7 +327,7 @@ export function SupplierQuotationPage() {
           <CardContent className="p-6 text-center text-sm">
             {q.isWinner
               ? 'E-ticket enviado. O TJRR fará a conferência final.'
-              : 'Cotação concluída.'}
+              : 'Cotação concluída. Sua proposta não foi a selecionada nesta disputa — agradecemos a participação.'}
           </CardContent>
         </Card>
       )}

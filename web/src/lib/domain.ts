@@ -42,6 +42,18 @@ export function fmtDateTime(iso: string): string {
   }).format(new Date(iso));
 }
 
+/** pt-BR labels for the deterministic ticket-conference divergence codes
+ *  (api/src/domain/divergence.rs). Unknown codes fall back to the raw code. */
+const DIVERGENCE_LABELS: Record<string, string> = {
+  PASSAGEIRO_DIVERGENTE: 'Nome do passageiro diverge do pedido',
+  VALOR_DIVERGENTE: 'Valor emitido diverge da proposta vencedora',
+  DATA_DIVERGENTE: 'Data de embarque diverge do pedido',
+};
+
+export function divergenceLabel(code: string): string {
+  return DIVERGENCE_LABELS[code] ?? code;
+}
+
 export function serverOffsetMs(serverNowIso: string, clientNowMs: number): number {
   return new Date(serverNowIso).getTime() - clientNowMs;
 }

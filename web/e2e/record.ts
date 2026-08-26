@@ -143,8 +143,13 @@ async function main(): Promise<void> {
   await staff.getByText('menor para maior').waitFor();
   await snap(staff, 'staff-ranking-preselected');
 
-  // ── One-click award ───────────────────────────────────────────────
+  // ── One-click award (confirm dialog summarizes the selected proposal) ──
   await staff.getByRole('button', { name: 'Declarar vencedora e emitir OS' }).click();
+  await staff.getByRole('button', { name: 'Confirmar adjudicação' }).waitFor();
+  // Let the dialog's entrance spring settle so the shot isn't mid-animation.
+  await staff.waitForTimeout(450);
+  await snap(staff, 'staff-award-confirm');
+  await staff.getByRole('button', { name: 'Confirmar adjudicação' }).click();
   await staff.getByText('Aguardando e-ticket').waitFor();
   await snap(staff, 'staff-awarded-waiting-ticket');
 
@@ -163,12 +168,18 @@ async function main(): Promise<void> {
   await staff.getByText('Conferência do e-ticket').waitFor();
   await snap(staff, 'staff-ticket-conference');
   await staff.getByRole('button', { name: 'Confirmar e concluir' }).click();
+  // Divergence-aware confirmation dialog before the conclusion is final.
+  await staff.getByRole('button', { name: 'Concluir cotação' }).click();
   // 'abaixo da referência' already renders in the prior (TICKETED) screenshot —
   // the economy card doesn't depend on ticket confirmation — so waiting on it here
   // resolves immediately, racing ahead of the COMPLETED transition. Wait for the
   // status badge to actually flip instead. exact:true is required — a plain
   // substring match also hits the "Cotação concluída." success toast.
   await staff.getByText('Concluída', { exact: true }).waitFor();
+  // The status flips while the confirm dialog is still animating out — wait for
+  // it to unmount (plus a beat for the toast) so the economy shot is clean.
+  await staff.getByRole('button', { name: 'Concluir cotação' }).waitFor({ state: 'detached' });
+  await staff.waitForTimeout(450);
   await snap(staff, 'staff-economy-and-audit');
 
   // ── Printable pages (token via localStorage) ──────────────────────

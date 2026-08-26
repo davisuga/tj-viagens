@@ -1,19 +1,23 @@
 import { useState, type FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { api } from '@/lib/api';
-import { parseJwt, useAuth } from '@/lib/auth';
+import { roleHome, useAuth } from '@/lib/auth';
+import { errorMessage } from '@/lib/errors';
 
 export function Login() {
-  const { signIn } = useAuth();
-  const navigate = useNavigate();
+  const { user, signIn } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [pending, setPending] = useState(false);
+
+  // Already signed in (including right after signIn below): go to the role
+  // home instead of showing a login form over a valid session.
+  if (user) return <Navigate to={roleHome(user)} replace />;
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -24,10 +28,14 @@ export function Login() {
         body: { email, password },
       });
       signIn(res.token);
-      const user = parseJwt(res.token);
-      navigate(user?.role === 'FORNECEDOR' ? '/fornecedor' : '/');
-    } catch {
-      toast.error('E-mail ou senha inválidos.');
+    } catch (err) {
+      // Only a real 401 means bad credentials — a down API must not be
+      // reported as "wrong password".
+      toast.error(
+        err instanceof Error && err.message === 'NAO_AUTENTICADO'
+          ? 'E-mail ou senha inválidos.'
+          : errorMessage(err),
+      );
     } finally {
       setPending(false);
     }
@@ -52,8 +60,8 @@ export function Login() {
               <Label htmlFor="password">Senha</Label>
               <Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
             </div>
-            <Button type="submit" className="w-full" disabled={pending}>
-              {pending ? 'Entrando…' : 'Entrar'}
+            <Button type="submit" className="w-full" loading={pending} disabled={pending}>
+              Entrar
             </Button>
             <p className="text-center text-sm text-muted-foreground">
               Agência de viagens ainda sem acesso?{' '}

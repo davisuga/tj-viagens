@@ -41,6 +41,9 @@ export function SupplierHome() {
   const [docType, setDocType] = useState<string>(DOC_TYPES[0][0]);
   const [validUntil, setValidUntil] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  // Bumped on success to remount the (uncontrolled) file input, clearing the
+  // shown filename — setFile(null) alone leaves it in the DOM.
+  const [fileKey, setFileKey] = useState(0);
   const [uploading, setUploading] = useState(false);
 
   async function uploadDoc(e: FormEvent) {
@@ -55,6 +58,7 @@ export function SupplierHome() {
       await api('/suppliers/me/documents', { method: 'POST', form });
       toast.success('Documento enviado.');
       setFile(null);
+      setFileKey((k) => k + 1);
       setValidUntil('');
       await queryClient.invalidateQueries({ queryKey: ['me'] });
     } catch (err) {
@@ -137,14 +141,20 @@ export function SupplierHome() {
               <div className="space-y-1.5">
                 <Label htmlFor="docFile">Arquivo do documento</Label>
                 <Input
+                  key={fileKey}
                   id="docFile"
                   type="file"
                   onChange={(e) => setFile(e.target.files?.[0] ?? null)}
                   required
                 />
               </div>
-              <Button type="submit" disabled={uploading || !file} className="w-full md:w-auto">
-                {uploading ? 'Enviando…' : 'Enviar documento'}
+              <Button
+                type="submit"
+                loading={uploading}
+                disabled={uploading || !file}
+                className="w-full md:w-auto"
+              >
+                Enviar documento
               </Button>
             </form>
           </CardContent>
@@ -156,13 +166,44 @@ export function SupplierHome() {
           </CardHeader>
           <CardContent>
             <ul className="space-y-2 text-sm">
+              {notifications.isPending && (
+                <li className="text-muted-foreground">Carregando notificações…</li>
+              )}
+              {notifications.isError && (
+                <li className="space-y-2">
+                  <p className="text-destructive">Não foi possível carregar as notificações.</p>
+                  <Button
+                    size="sm"
+                    variant="tertiary"
+                    loading={notifications.isFetching}
+                    onClick={() => void notifications.refetch()}
+                  >
+                    Tentar novamente
+                  </Button>
+                </li>
+              )}
               {(notifications.data ?? []).map((n) => (
-                <li key={n.id} className="rounded bg-muted p-2">
-                  <p>{n.message}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{fmtDateTime(n.createdAt)}</p>
+                <li key={n.id}>
+                  {n.quotationId ? (
+                    <Link
+                      to={`/fornecedor/cotacoes/${n.quotationId}`}
+                      className="block rounded bg-muted p-2 transition-colors hover:bg-active"
+                    >
+                      <p>{n.message}</p>
+                      <p className="mt-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                        <span>{fmtDateTime(n.createdAt)}</span>
+                        <span className="font-medium text-primary">Abrir cotação →</span>
+                      </p>
+                    </Link>
+                  ) : (
+                    <div className="rounded bg-muted p-2">
+                      <p>{n.message}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{fmtDateTime(n.createdAt)}</p>
+                    </div>
+                  )}
                 </li>
               ))}
-              {(notifications.data ?? []).length === 0 && (
+              {notifications.data?.length === 0 && (
                 <li className="text-muted-foreground">
                   Nenhuma notificação. Novas cotações aparecem aqui e no seu e-mail.
                 </li>
@@ -178,6 +219,22 @@ export function SupplierHome() {
             <CardTitle className="text-base">Cotações</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-3 md:grid-cols-2">
+            {quotations.isPending && (
+              <p className="text-sm text-muted-foreground">Carregando cotações…</p>
+            )}
+            {quotations.isError && (
+              <div className="space-y-2 text-sm">
+                <p className="text-destructive">Não foi possível carregar as cotações.</p>
+                <Button
+                  size="sm"
+                  variant="tertiary"
+                  loading={quotations.isFetching}
+                  onClick={() => void quotations.refetch()}
+                >
+                  Tentar novamente
+                </Button>
+              </div>
+            )}
             {(quotations.data ?? []).map((q) => (
               <Link key={q.id} to={`/fornecedor/cotacoes/${q.id}`} className="block">
                 <Card className="transition hover:border-primary">
@@ -208,7 +265,7 @@ export function SupplierHome() {
                 </Card>
               </Link>
             ))}
-            {(quotations.data ?? []).length === 0 && (
+            {quotations.data?.length === 0 && (
               <p className="text-sm text-muted-foreground">
                 Nenhuma cotação aberta no momento. Você será notificado por e-mail e neste painel.
               </p>

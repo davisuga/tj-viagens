@@ -13,8 +13,8 @@ import { proposalsCount, type Metrics, type StaffQuotation } from '@/lib/types';
 
 function QuotationLine({ q, cta }: { q: StaffQuotation; cta: string }) {
   return (
-    <li className="flex items-center justify-between gap-2 rounded border p-3">
-      <div>
+    <li className="flex flex-wrap items-center justify-between gap-2 rounded border p-3">
+      <div className="min-w-0">
         <p className="font-medium">
           {q.code} · {q.origin} → {q.destination}
         </p>
@@ -23,7 +23,7 @@ function QuotationLine({ q, cta }: { q: StaffQuotation; cta: string }) {
           proposta(s)
         </p>
       </div>
-      <div className="flex items-center gap-3">
+      <div className="flex shrink-0 items-center gap-3">
         {q.status === 'OPEN' && q.closesAt && (
           <Countdown deadline={q.closesAt} serverNow={q.serverNow} size="sm" />
         )}

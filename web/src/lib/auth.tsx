@@ -48,6 +48,11 @@ export function useAuth(): AuthCtx {
   return useContext(Ctx);
 }
 
+/** Landing page for a signed-in user's role. */
+export function roleHome(user: SessionUser): string {
+  return user.role === 'FORNECEDOR' ? '/fornecedor' : '/';
+}
+
 export function RequireRole({
   roles,
   children,
@@ -56,6 +61,9 @@ export function RequireRole({
   children: ReactNode;
 }) {
   const { user } = useAuth();
-  if (!user || !roles.includes(user.role)) return <Navigate to="/login" replace />;
+  if (!user) return <Navigate to="/login" replace />;
+  // Wrong area for this role: send to the role's own home, not to the login
+  // form — the session is still valid.
+  if (!roles.includes(user.role)) return <Navigate to={roleHome(user)} replace />;
   return <>{children}</>;
 }
