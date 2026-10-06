@@ -30,6 +30,17 @@ cd web && bun install && bun run dev   # http://localhost:5173
 
 Testes: `cd api && cargo test -- --test-threads=1` (usa o banco `tjviagens_test`).
 
+Testes end-to-end (navegador de verdade contra a API e o Postgres reais):
+
+```bash
+cd web && bun run test:e2e
+```
+
+Sobem a própria API (:3101, banco `tjviagens_e2e`) e o próprio front (:5174), então o ambiente
+de desenvolvimento em :3001/:5173 e seus dados não são tocados; cada teste ressemeia o banco.
+A primeira execução compila a API. Relatório em `web/e2e/report`, rastros de falha em
+`web/e2e/results` (`bunx playwright show-trace <arquivo>`).
+
 ## Credenciais de demonstração (senha `demo1234`)
 
 | Perfil | E-mail |

@@ -473,9 +473,9 @@ export function StaffQuotationDetail() {
                     )}
                     {deviation && (
                       <div className="space-y-1.5">
-                        <Label>Motivo da escolha</Label>
+                        <Label htmlFor="awardReason">Motivo da escolha</Label>
                         <Select value={reason} onValueChange={(v) => setReason(v as AwardReason)}>
-                          <SelectTrigger placeholder="Motivo" className="w-full md:w-[28rem]" />
+                          <SelectTrigger id="awardReason" placeholder="Motivo" className="w-full md:w-[28rem]" />
                           <SelectContent>
                             {reasons.map((value, index) => (
                               <SelectItem key={value} index={index} value={value}>

@@ -293,12 +293,12 @@ export function SupplierQuotationPage() {
                   </datalist>
                 </div>
                 <div className="min-w-0 space-y-1.5">
-                  <Label>Conexões</Label>
+                  <Label htmlFor="connections">Conexões</Label>
                   {/* Fluid Functionalism Select: value display comes from the selected
                       item; each SelectItem needs its list `index`. */}
                   <Select value={connections} onValueChange={setConnections}>
                     {/* The trigger ships with min-w-[160px]; a phone half-column is ~150px. */}
-                    <SelectTrigger placeholder="Conexões" className="w-full min-w-0" />
+                    <SelectTrigger id="connections" placeholder="Conexões" className="w-full min-w-0" />
                     <SelectContent>
                       {CONNECTION_OPTIONS.map(([value, label], index) => (
                         <SelectItem key={value} index={index} value={value}>
