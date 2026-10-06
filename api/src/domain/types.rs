@@ -114,6 +114,15 @@ impl DocType {
             DocType::Cndt => "CNDT",
         }
     }
+    /// pt-BR name printed in the dossiê and the supplier list.
+    pub fn label(&self) -> &'static str {
+        match self {
+            DocType::ContratoSocial => "Contrato social",
+            DocType::CndFederal => "CND Federal",
+            DocType::CrfFgts => "CRF do FGTS",
+            DocType::Cndt => "CNDT",
+        }
+    }
     pub fn parse(s: &str) -> Option<DocType> {
         match s {
             "CONTRATO_SOCIAL" => Some(DocType::ContratoSocial),

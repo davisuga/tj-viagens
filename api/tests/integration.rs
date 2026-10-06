@@ -450,7 +450,7 @@ async fn proposals_concurrent_bids_replacement_and_window_enforcement() {
         app.client
             .post(format!("{}/quotations/{id}/proposals", app.base))
             .bearer_auth(token)
-            .json(&json!({ "totalPriceCents": price, "flightInfo": "G3-1720 08:15" }))
+            .json(&common::bid(price))
             .send()
     }))
     .await;
@@ -478,7 +478,7 @@ async fn proposals_concurrent_bids_replacement_and_window_enforcement() {
         .client
         .post(format!("{}/quotations/{id}/proposals", app.base))
         .bearer_auth(&tokens[0])
-        .json(&json!({ "totalPriceCents": 151000, "flightInfo": "G3-1720 08:15" }))
+        .json(&common::bid(151000))
         .send()
         .await
         .unwrap()
@@ -506,7 +506,7 @@ async fn proposals_concurrent_bids_replacement_and_window_enforcement() {
         .client
         .post(format!("{}/quotations/{id}/proposals", app.base))
         .bearer_auth(&tokens[1])
-        .json(&json!({ "totalPriceCents": 2_000_000_000i64, "flightInfo": "G3-1720" }))
+        .json(&common::bid(2_000_000_000i64))
         .send()
         .await
         .unwrap();
@@ -518,7 +518,7 @@ async fn proposals_concurrent_bids_replacement_and_window_enforcement() {
         .client
         .post(format!("{}/quotations/{id}/proposals", app.base))
         .bearer_auth(&tokens[0])
-        .json(&json!({ "totalPriceCents": 140000, "flightInfo": "G3-1720 08:15" }))
+        .json(&common::bid(140000))
         .send()
         .await
         .unwrap();
@@ -561,7 +561,7 @@ async fn ranking_orders_lowest_first_with_tiebreak_then_award_starts_ticket_wind
             .client
             .post(format!("{}/quotations/{id}/proposals", app.base))
             .bearer_auth(&token)
-            .json(&json!({ "totalPriceCents": price, "flightInfo": "G3-1720 08:15" }))
+            .json(&common::bid(price))
             .send()
             .await
             .unwrap();
@@ -952,7 +952,7 @@ async fn sse_stream_delivers_hello_then_proposal_count() {
     app.client
         .post(format!("{}/quotations/{id}/proposals", app.base))
         .bearer_auth(&supplier_token)
-        .json(&json!({ "totalPriceCents": 150000, "flightInfo": "G3-1720" }))
+        .json(&common::bid(150000))
         .send()
         .await
         .unwrap();
@@ -1032,7 +1032,7 @@ async fn full_flow_credenciamento_to_report_through_http_only() {
                 .client
                 .post(format!("{}/quotations/{id_ref}/proposals", app_ref.base))
                 .bearer_auth(&token)
-                .json(&json!({ "totalPriceCents": price, "flightInfo": "G3-1720 08:15" }))
+                .json(&common::bid(*price))
                 .send()
                 .await
                 .unwrap()
@@ -1139,4 +1139,253 @@ async fn full_flow_credenciamento_to_report_through_http_only() {
         .await
         .unwrap();
     assert_eq!(metrics["awardedCount"], 1);
+}
+
+// ---- TJRR travel-desk feedback, round 1 -------------------------------------
+
+async fn post_award(
+    app: &common::TestApp,
+    staff: &str,
+    id: &str,
+    body: serde_json::Value,
+) -> reqwest::Response {
+    app.client
+        .post(format!("{}/quotations/{id}/award", app.base))
+        .bearer_auth(staff)
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+}
+
+async fn get_json(app: &common::TestApp, token: &str, path: &str) -> serde_json::Value {
+    app.client
+        .get(format!("{}{path}", app.base))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap()
+}
+
+async fn get_text(app: &common::TestApp, token: &str, path: &str) -> String {
+    app.client
+        .get(format!("{}{path}", app.base))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap()
+}
+
+async fn place_bid(app: &common::TestApp, email: &str, id: &str, body: serde_json::Value) {
+    let token = common::login(app, email).await;
+    let res = app
+        .client
+        .post(format!("{}/quotations/{id}/proposals", app.base))
+        .bearer_auth(&token)
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 201, "bid from {email} rejected");
+}
+
+#[tokio::test]
+async fn sei_process_is_required_and_never_reaches_suppliers() {
+    let app = spawn_app().await;
+    common::create_staff(&app.pool, "servidor@tjrr.jus.br").await;
+    let staff = common::login(&app, "servidor@tjrr.jus.br").await;
+    let mut payload = common::quotation_payload();
+    payload["seiProcess"] = json!("SEI abc");
+    let bad = app
+        .client
+        .post(format!("{}/quotations", app.base))
+        .bearer_auth(&staff)
+        .json(&payload)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad.status(), 422);
+    assert_eq!(bad.json::<serde_json::Value>().await.unwrap()["error"], "PROCESSO_SEI_INVALIDO");
+
+    common::create_supplier(&app.pool, "11222333000181", "a@example.com", "ACTIVE", "Voa Roraima").await;
+    let id = common::create_open_quotation(&app, &staff).await;
+    let staff_view = get_json(&app, &staff, &format!("/quotations/{id}")).await;
+    assert_eq!(staff_view["seiProcess"], "0001234-56.2026.8.23.8000");
+    let supplier = common::login(&app, "a@example.com").await;
+    let raw = get_text(&app, &supplier, &format!("/quotations/{id}")).await;
+    assert!(!raw.contains("seiProcess") && !raw.contains("0001234-56"), "SEI number leaked: {raw}");
+}
+
+#[tokio::test]
+async fn bids_require_a_structured_itinerary() {
+    let app = spawn_app().await;
+    common::create_staff(&app.pool, "servidor@tjrr.jus.br").await;
+    let staff = common::login(&app, "servidor@tjrr.jus.br").await;
+    common::create_supplier(&app.pool, "11222333000181", "a@example.com", "ACTIVE", "Voa Roraima").await;
+    let id = common::create_open_quotation(&app, &staff).await;
+    let token = common::login(&app, "a@example.com").await;
+    let mut blank_airline = common::bid(150000);
+    blank_airline["airline"] = json!(" ");
+    for (body, code) in [
+        (common::bid_with(150000, 5, 1), "DURACAO_INVALIDA"),
+        (common::bid_with(150000, 300, 9), "CONEXOES_INVALIDAS"),
+        (blank_airline, "COMPANHIA_INVALIDA"),
+    ] {
+        let res = app
+            .client
+            .post(format!("{}/quotations/{id}/proposals", app.base))
+            .bearer_auth(&token)
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 422);
+        assert_eq!(res.json::<serde_json::Value>().await.unwrap()["error"], code);
+    }
+    place_bid(&app, "a@example.com", &id, common::bid_with(150000, 340, 0)).await;
+    let mine = get_json(&app, &token, &format!("/quotations/{id}")).await;
+    assert_eq!(mine["myProposal"]["durationMinutes"], 340);
+    assert_eq!(mine["myProposal"]["connections"], 0);
+    assert_eq!(mine["myProposal"]["airline"], "GOL");
+}
+
+#[tokio::test]
+async fn award_checks_certidoes_at_decision_time() {
+    let app = spawn_app().await;
+    common::create_staff(&app.pool, "servidor@tjrr.jus.br").await;
+    let staff = common::login(&app, "servidor@tjrr.jus.br").await;
+    let lapsed =
+        common::create_supplier(&app.pool, "11222333000181", "a@example.com", "ACTIVE", "Voa Roraima").await;
+    common::create_supplier(&app.pool, "11444777000161", "b@example.com", "ACTIVE", "Amazônia Viagens").await;
+    let id = common::create_open_quotation(&app, &staff).await;
+    place_bid(&app, "a@example.com", &id, common::bid(140000)).await;
+    place_bid(&app, "b@example.com", &id, common::bid(152300)).await;
+    // Credenciada months ago, but the CRF do FGTS lapsed before the award.
+    common::expire_certidao(&app.pool, lapsed, "CRF_FGTS").await;
+    common::time_travel_past_close(&app.pool, &id).await;
+
+    let ranking = get_json(&app, &staff, &format!("/quotations/{id}/ranking")).await;
+    let cheapest = &ranking["ranking"][0];
+    assert_eq!(cheapest["totalPriceCents"], 140000);
+    assert_eq!(cheapest["habilitacao"]["eligible"], false);
+    let crf = cheapest["habilitacao"]["docs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["docType"] == "CRF_FGTS")
+        .unwrap();
+    assert_eq!(crf["state"], "EXPIRED");
+    assert_eq!(ranking["ranking"][1]["habilitacao"]["eligible"], true);
+
+    let refused = post_award(
+        &app,
+        &staff,
+        &id,
+        json!({ "proposalId": cheapest["proposalId"], "justification": "Menor preço" }),
+    )
+    .await;
+    assert_eq!(refused.status(), 422);
+    assert_eq!(refused.json::<serde_json::Value>().await.unwrap()["error"], "FORNECEDOR_INABILITADO");
+
+    // The next bid is now the lowest ELIGIBLE price, so price alone justifies it.
+    let awarded = post_award(
+        &app,
+        &staff,
+        &id,
+        json!({
+            "proposalId": ranking["ranking"][1]["proposalId"],
+            "reason": "MENOR_PRECO",
+            "justification": "Menor preço entre as propostas habilitadas."
+        }),
+    )
+    .await;
+    assert_eq!(awarded.status(), 200);
+
+    let report = get_text(&app, &staff, &format!("/quotations/{id}/report")).await;
+    assert!(report.contains("Desconsiderada"), "report must say why the cheapest bid lost");
+    assert!(report.contains("CRF do FGTS vencida em"));
+    let snapshot: serde_json::Value =
+        sqlx::query_scalar("SELECT award_snapshot FROM quotations WHERE id = $1")
+            .bind(uuid::Uuid::parse_str(&id).unwrap())
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    assert_eq!(snapshot["bids"][0]["eligible"], false);
+    assert_eq!(get_json(&app, &staff, "/audit/verify").await["ok"], true);
+}
+
+#[tokio::test]
+async fn award_reason_must_hold_against_the_bids() {
+    let app = spawn_app().await;
+    common::create_staff(&app.pool, "servidor@tjrr.jus.br").await;
+    let staff = common::login(&app, "servidor@tjrr.jus.br").await;
+    common::create_supplier(&app.pool, "11222333000181", "a@example.com", "ACTIVE", "Voa Roraima").await;
+    common::create_supplier(&app.pool, "11444777000161", "b@example.com", "ACTIVE", "Amazônia Viagens").await;
+    let id = common::create_open_quotation(&app, &staff).await;
+    // From Roraima: the cheapest takes 8h50, the other costs R$ 24 more and takes 5h40.
+    place_bid(&app, "b@example.com", &id, common::bid_with(149900, 530, 1)).await;
+    place_bid(&app, "a@example.com", &id, common::bid_with(152300, 340, 1)).await;
+    common::time_travel_past_close(&app.pool, &id).await;
+    let ranking = get_json(&app, &staff, &format!("/quotations/{id}/ranking")).await;
+    let shorter = ranking["ranking"][1]["proposalId"].clone();
+
+    for (body, code) in [
+        (json!({ "proposalId": shorter, "justification": "Menor preço" }), "MOTIVO_NAO_CONFERE"),
+        (
+            json!({ "proposalId": shorter, "reason": "MENOR_DURACAO", "justification": "Mais curto" }),
+            "JUSTIFICATIVA_OBRIGATORIA",
+        ),
+        (
+            json!({
+                "proposalId": shorter, "reason": "MENOS_CONEXOES",
+                "justification": "Mesmo número de conexões, não pode passar."
+            }),
+            "MOTIVO_NAO_CONFERE",
+        ),
+        (
+            json!({ "proposalId": shorter, "reason": "QUALQUER", "justification": "Justificativa longa." }),
+            "MOTIVO_INVALIDO",
+        ),
+    ] {
+        let res = post_award(&app, &staff, &id, body).await;
+        assert_eq!(res.status(), 422);
+        assert_eq!(res.json::<serde_json::Value>().await.unwrap()["error"], code);
+    }
+
+    let ok = post_award(
+        &app,
+        &staff,
+        &id,
+        json!({
+            "proposalId": shorter,
+            "reason": "MENOR_DURACAO",
+            "justification": "Chega 3h antes; a magistrada tem audiência às 14h."
+        }),
+    )
+    .await;
+    assert_eq!(ok.status(), 200);
+    let view = get_json(&app, &staff, &format!("/quotations/{id}")).await;
+    assert_eq!(view["awardReason"], "MENOR_DURACAO");
+
+    let report = get_text(&app, &staff, &format!("/quotations/{id}/report")).await;
+    assert!(report.contains("Viagem mais curta que a da proposta de menor preço"));
+    assert!(report.contains("R$ 24,00 (+1,6%) acima"), "comparison missing: {report}");
+    assert!(report.contains("3h10 mais curta"));
+
+    let payload: serde_json::Value = sqlx::query_scalar(
+        "SELECT payload FROM audit_events WHERE event_type = 'QUOTATION_AWARDED' AND quotation_id = $1",
+    )
+    .bind(uuid::Uuid::parse_str(&id).unwrap())
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(payload["reason"], "MENOR_DURACAO");
+    assert_eq!(payload["isLowestEligiblePrice"], false);
+    assert_eq!(get_json(&app, &staff, "/audit/verify").await["ok"], true);
 }

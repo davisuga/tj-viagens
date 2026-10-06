@@ -15,7 +15,8 @@ use crate::audit::{append_audit, append_audit_tx, AuditInput};
 use crate::auth::{hash_password, AuthUser, Claims, Staff};
 use crate::domain::checklist::{checklist, ChecklistResult};
 use crate::domain::cnpj::is_valid_cnpj;
-use crate::domain::types::{DocType, Role};
+use crate::domain::timefmt::boa_vista_date;
+use crate::domain::types::{DocType, Role, SupplierStatus};
 use crate::error::{ApiError, ApiResult};
 use crate::uploads::save_upload;
 use crate::App;
@@ -45,7 +46,34 @@ pub async fn load_checklist(pool: &PgPool, supplier_id: Uuid) -> ApiResult<Check
         .iter()
         .filter_map(|r| DocType::parse(&r.doc_type).map(|t| (t, r.valid_until)))
         .collect();
-    Ok(checklist(&docs, Utc::now().date_naive()))
+    Ok(checklist(&docs, boa_vista_date(Utc::now())))
+}
+
+/// Whether a supplier can be contracted right now: credenciado (ACTIVE) and every
+/// certidão valid today. Credenciamento is decided once, but certidões lapse every
+/// ~30 days, so this is evaluated when the award is decided, not at homologation.
+pub struct Eligibility {
+    pub status: String,
+    pub checklist: ChecklistResult,
+    pub eligible: bool,
+}
+
+pub async fn supplier_eligibility(
+    pool: &PgPool,
+    supplier_ids: &[Uuid],
+) -> ApiResult<HashMap<Uuid, Eligibility>> {
+    let rows: Vec<(Uuid, String)> =
+        sqlx::query_as("SELECT id, status FROM suppliers WHERE id = ANY($1)")
+            .bind(supplier_ids)
+            .fetch_all(pool)
+            .await?;
+    let mut result = HashMap::with_capacity(rows.len());
+    for (id, status) in rows {
+        let checklist = load_checklist(pool, id).await?;
+        let eligible = SupplierStatus::parse(&status) == Some(SupplierStatus::Active) && checklist.ok;
+        result.insert(id, Eligibility { status, checklist, eligible });
+    }
+    Ok(result)
 }
 
 #[derive(Deserialize)]

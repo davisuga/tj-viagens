@@ -100,7 +100,54 @@ pub async fn create_supplier(
     .execute(pool)
     .await
     .unwrap();
+    // An ACTIVE supplier can only win with every certidão valid (award checks it),
+    // so give it the four documents, valid for six months from today.
+    if status == "ACTIVE" {
+        for doc_type in ["CONTRATO_SOCIAL", "CND_FEDERAL", "CRF_FGTS", "CNDT"] {
+            sqlx::query(
+                "INSERT INTO supplier_documents (id, supplier_id, doc_type, file_name, file_path, valid_until, uploaded_at) \
+                 VALUES ($1, $2, $3, 'doc.pdf', 'test/doc.pdf', CURRENT_DATE + 180, now() - interval '1 day')",
+            )
+            .bind(Uuid::new_v4())
+            .bind(id)
+            .bind(doc_type)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+    }
     id
+}
+
+/// Lets one certidão lapse: a newer upload of the same type with a past validity
+/// supersedes the valid one, exactly like an agency that failed to renew.
+pub async fn expire_certidao(pool: &PgPool, supplier_id: Uuid, doc_type: &str) {
+    sqlx::query(
+        "INSERT INTO supplier_documents (id, supplier_id, doc_type, file_name, file_path, valid_until) \
+         VALUES ($1, $2, $3, 'old.pdf', 'test/old.pdf', CURRENT_DATE - 3)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(supplier_id)
+    .bind(doc_type)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// A complete bid: price plus the structured itinerary the API now requires.
+pub fn bid(price_cents: i64) -> serde_json::Value {
+    bid_with(price_cents, 530, 1)
+}
+
+pub fn bid_with(price_cents: i64, duration_minutes: i32, connections: i32) -> serde_json::Value {
+    serde_json::json!({
+        "totalPriceCents": price_cents,
+        "airline": "GOL",
+        "flightInfo": "G3-1720 / G3-1450",
+        "departsAt": "2026-09-10T12:15:00Z",
+        "durationMinutes": duration_minutes,
+        "connections": connections
+    })
 }
 
 pub async fn login(app: &TestApp, email: &str) -> String {
@@ -156,6 +203,7 @@ pub async fn register_with_docs(app: &TestApp, cnpj: &str, email: &str, name: &s
 
 pub fn quotation_payload() -> serde_json::Value {
     serde_json::json!({
+        "seiProcess": "0001234-56.2026.8.23.8000",
         "passengerName": "Maria da Silva",
         "passengerCpf": "123.456.789-09",
         "passengerSex": "F",
@@ -212,7 +260,7 @@ pub async fn setup_awarded(app: &TestApp, staff_token: &str) -> (String, &'stati
             .client
             .post(format!("{}/quotations/{id}/proposals", app.base))
             .bearer_auth(&token)
-            .json(&serde_json::json!({ "totalPriceCents": price, "flightInfo": "G3-1720 08:15" }))
+            .json(&bid(price))
             .send()
             .await
             .unwrap();

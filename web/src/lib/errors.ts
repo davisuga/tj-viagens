@@ -23,6 +23,16 @@ const MESSAGES: Record<string, string> = {
   NAO_ESTA_FECHADA: 'A cotação não está encerrada (ou já foi adjudicada).',
   PROPOSTA_INVALIDA: 'Proposta inválida para esta cotação.',
   JUSTIFICATIVA_CURTA: 'Escreva uma justificativa (mín. 5 caracteres).',
+  JUSTIFICATIVA_OBRIGATORIA:
+    'Ao não escolher o menor preço, explique o motivo (mín. 15 caracteres).',
+  MOTIVO_INVALIDO: 'Motivo da escolha inválido.',
+  MOTIVO_NAO_CONFERE: 'O motivo informado não confere com as propostas — revise a escolha.',
+  FORNECEDOR_INABILITADO:
+    'Fornecedor com certidão vencida ou faltando — não pode ser adjudicado.',
+  PROCESSO_SEI_INVALIDO: 'Número do processo SEI inválido — use só números e separadores.',
+  COMPANHIA_INVALIDA: 'Informe a companhia aérea.',
+  DURACAO_INVALIDA: 'Duração inválida — use horas:minutos, ex.: 5:40.',
+  CONEXOES_INVALIDAS: 'Número de conexões inválido.',
   NAO_AGUARDA_BILHETE: 'Esta cotação não aguarda e-ticket.',
   BILHETE_INVALIDO: 'Dados do bilhete inválidos.',
   BILHETE_NAO_ENVIADO: 'Nenhum e-ticket enviado.',

@@ -1,4 +1,16 @@
-export type ChecklistInfo = { missing: string[]; expired: string[]; ok: boolean };
+export type DocType = 'CONTRATO_SOCIAL' | 'CND_FEDERAL' | 'CRF_FGTS' | 'CNDT';
+export type DocState = 'OK' | 'EXPIRING' | 'EXPIRED' | 'MISSING';
+
+/** One required document as of today (Boa Vista). `validUntil` is null for
+ *  documents without expiry (contrato social) and for missing ones. */
+export type DocStatus = {
+  docType: DocType;
+  validUntil: string | null;
+  state: DocState;
+  daysLeft: number | null;
+};
+
+export type ChecklistInfo = { missing: string[]; expired: string[]; ok: boolean; docs: DocStatus[] };
 
 export type SupplierInfo = {
   id: string;
@@ -20,7 +32,15 @@ export type NotificationItem = {
   createdAt: string;
 };
 
-export type ProposalInfo = {
+/** Structured itinerary — null on bids recorded before it existed. */
+export type Itinerary = {
+  airline: string | null;
+  departsAt: string | null;
+  durationMinutes: number | null;
+  connections: number | null;
+};
+
+export type ProposalInfo = Itinerary & {
   id: string;
   supplierId: string;
   totalPriceCents: number;
@@ -50,8 +70,17 @@ export type SupplierQuotation = QuotationBase & {
   ticketDeadlineAt?: string | null;
 };
 
+export type AwardReason =
+  | 'MENOR_PRECO'
+  | 'MENOR_DURACAO'
+  | 'MENOS_CONEXOES'
+  | 'HORARIO_COMPATIVEL'
+  | 'OUTRO';
+
 export type StaffQuotation = QuotationBase & {
   passenger: { name: string; cpf: string; sex: string; birth: string };
+  seiProcess: string | null;
+  awardReason: AwardReason | null;
   referencePriceCents: number;
   awardedProposalId: string | null;
   awardedAt: string | null;
@@ -64,7 +93,7 @@ export function proposalsCount(p: StaffQuotation['proposals']): number {
   return Array.isArray(p) ? p.length : p.count;
 }
 
-export type RankingRow = {
+export type RankingRow = Itinerary & {
   position: number;
   proposalId: string;
   supplier: { id: string; legalName: string; cnpj: string };
@@ -73,6 +102,8 @@ export type RankingRow = {
   notes: string | null;
   submittedAt: string;
   deltaFromReferenceCents: number;
+  /** Eligibility right now: credenciado and every certidão valid. */
+  habilitacao: { eligible: boolean; supplierStatus: string | null; docs: DocStatus[] };
 };
 
 export type Metrics = {

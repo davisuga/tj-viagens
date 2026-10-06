@@ -47,16 +47,21 @@ Para demo ao vivo, encurte as janelas em `api/.env`:
 `PROPOSAL_WINDOW_MINUTES=2` e `TICKET_WINDOW_MINUTES=5` (reinicie a API).
 
 1. **Servidor** (janela A, `servidor@tjrr.jus.br`): dashboard já mostra economia acumulada da
-   cotação semeada. "Nova cotação" → dados do passageiro → criar → **Abrir** (diálogo avisa a
-   notificação simultânea).
-2. **Fornecedor** (janela B em largura de celular, `contato@voaroraima.com.br`): notificação no
-   painel → cotação → cronômetro grande → envia proposta (ex.: `1.523,00`). Repita com
-   `contato@amazoniaviagens.com.br` com preço menor (ex.: `1.499,00`).
+   cotação semeada. Em **Fornecedores**, a coluna Certidões separa credenciado de habilitado
+   (a Rio Branco está credenciada, mas com a CRF vencida). "Nova cotação" → processo SEI +
+   dados do passageiro → criar → **Abrir** (diálogo avisa a notificação simultânea).
+2. **Fornecedor** (janela B em largura de celular, `contato@voaroraima.com.br`): aviso de que a
+   CRF vence em 6 dias → cotação → cronômetro grande → envia proposta com itinerário
+   (ex.: `1.523,00`, LATAM, duração `5:40`). Repita com `contato@amazoniaviagens.com.br` mais
+   barata e mais longa (ex.: `1.499,00`, GOL, `8:50`).
 3. Janela A: contagem de propostas sobe ao vivo (valores lacrados). Ao encerrar: ranking
-   menor→maior com a 1ª pré-selecionada → **Declarar vencedora e emitir OS** (1 clique).
+   menor→maior com preço, itinerário e habilitação; a de menor preço **habilitada** vem
+   pré-selecionada. Escolher a mais rápida exige motivo (verificado contra as propostas) e
+   justificativa → **Declarar vencedora e emitir OS**.
 4. Janela B (vencedora): banner 🏆 + prazo de 30 min → anexa e-ticket.
 5. Janela A: conferência lado a lado sem divergências → **Confirmar** → card de economia,
-   selo "trilha de auditoria íntegra", botões OS/Relatório imprimíveis (anexáveis ao SEI).
+   selo "trilha de auditoria íntegra", botões OS/Relatório imprimíveis (anexáveis ao SEI; o
+   relatório traz a seção Decisão com o comparativo contra a proposta mais barata).
 
 ## Estrutura
 

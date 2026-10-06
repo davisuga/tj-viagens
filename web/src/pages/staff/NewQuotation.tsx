@@ -22,6 +22,7 @@ export function NewQuotation() {
   const [pending, setPending] = useState(false);
   const [sex, setSex] = useState('F');
   const [form, setForm] = useState({
+    seiProcess: '',
     passengerName: '',
     passengerCpf: '',
     passengerBirth: '',
@@ -47,6 +48,7 @@ export function NewQuotation() {
       const q = await api<{ id: string }>('/quotations', {
         method: 'POST',
         body: {
+          seiProcess: form.seiProcess,
           passengerName: form.passengerName,
           passengerCpf: form.passengerCpf,
           passengerSex: sex,
@@ -82,6 +84,20 @@ export function NewQuotation() {
         </CardHeader>
         <CardContent>
           <form onSubmit={onSubmit} className="grid gap-3 md:grid-cols-2">
+            <div className="space-y-1.5 md:col-span-2">
+              <Label htmlFor="seiProcess">Processo SEI</Label>
+              <Input
+                id="seiProcess"
+                placeholder="0001234-56.2026.8.23.8000"
+                inputMode="numeric"
+                value={form.seiProcess}
+                onChange={set('seiProcess')}
+                required
+              />
+              <p className="text-xs text-muted-foreground">
+                O processo de onde vem a solicitação — sai na Ordem de Serviço e no relatório.
+              </p>
+            </div>
             <div className="space-y-1.5 md:col-span-2">
               <Label htmlFor="passengerName">Nome do passageiro</Label>
               <Input

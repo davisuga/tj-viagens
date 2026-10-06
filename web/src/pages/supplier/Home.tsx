@@ -11,9 +11,28 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { api } from '@/lib/api';
-import { fmtDateTime, formatBRL } from '@/lib/domain';
+import { fmtDateOnly, fmtDateTime, formatBRL } from '@/lib/domain';
 import { errorMessage } from '@/lib/errors';
-import type { NotificationItem, SupplierMe, SupplierQuotation } from '@/lib/types';
+import type { DocStatus, NotificationItem, SupplierMe, SupplierQuotation } from '@/lib/types';
+
+/** One certidão line: validity, and how urgent a renewal is. */
+function docLine(doc: DocStatus | undefined): { text: string; tone: string } {
+  if (!doc) return { text: '✖ pendente', tone: 'text-red-700' };
+  const date = doc.validUntil ? fmtDateOnly(doc.validUntil) : null;
+  switch (doc.state) {
+    case 'MISSING':
+      return { text: '✖ pendente', tone: 'text-red-700' };
+    case 'EXPIRED':
+      return { text: `⚠ vencida em ${date ?? '—'} — reenvie`, tone: 'text-red-700' };
+    case 'EXPIRING':
+      return {
+        text: doc.daysLeft === 0 ? `⚠ vence hoje (${date}) — renove` : `⚠ vence em ${doc.daysLeft} dia${doc.daysLeft === 1 ? '' : 's'} (${date})`,
+        tone: 'text-amber-700',
+      };
+    case 'OK':
+      return { text: date ? `✔ válida até ${date}` : '✔ ok', tone: 'text-muted-foreground' };
+  }
+}
 
 const DOC_TYPES = [
   ['CONTRATO_SOCIAL', 'Contrato social'],
@@ -104,17 +123,19 @@ export function SupplierHome() {
             {supplier.statusReason && (
               <p className="rounded bg-amber-50 p-2 text-sm">{supplier.statusReason}</p>
             )}
+            {active && !checklist.ok && (
+              <p className="rounded border border-red-200 bg-red-50 p-2 text-sm text-red-800">
+                Você continua recebendo as cotações, mas com certidão vencida ou faltando sua
+                proposta não pode ser adjudicada. Envie o documento atualizado abaixo.
+              </p>
+            )}
             <ul className="space-y-1 text-sm">
               {DOC_TYPES.map(([key, label]) => {
-                const state = checklist.missing.includes(key)
-                  ? '✖ pendente'
-                  : checklist.expired.includes(key)
-                    ? '⚠ vencido — reenvie'
-                    : '✔ ok';
+                const line = docLine(checklist.docs.find((d) => d.docType === key));
                 return (
                   <li key={key} className="flex justify-between gap-2">
                     <span>{label}</span>
-                    <span className="text-muted-foreground">{state}</span>
+                    <span className={`text-right ${line.tone}`}>{line.text}</span>
                   </li>
                 );
               })}
