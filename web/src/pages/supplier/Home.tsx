@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { api } from '@/lib/api';
-import { fmtDateOnly, fmtDateTime, formatBRL } from '@/lib/domain';
+import { fileTooBig, fmtDateOnly, fmtDateTime, formatBRL } from '@/lib/domain';
 import { errorMessage } from '@/lib/errors';
 import type { DocStatus, NotificationItem, SupplierMe, SupplierQuotation } from '@/lib/types';
 
@@ -68,6 +68,10 @@ export function SupplierHome() {
   async function uploadDoc(e: FormEvent) {
     e.preventDefault();
     if (!file) return;
+    if (fileTooBig(file)) {
+      toast.error(errorMessage(new Error('ARQUIVO_GRANDE')));
+      return;
+    }
     setUploading(true);
     const form = new FormData();
     form.append('type', docType);
@@ -168,6 +172,7 @@ export function SupplierHome() {
                   onChange={(e) => setFile(e.target.files?.[0] ?? null)}
                   required
                 />
+                <p className="text-xs text-muted-foreground">PDF ou imagem, até 10 MB.</p>
               </div>
               <Button
                 type="submit"

@@ -5,6 +5,7 @@ const MESSAGES: Record<string, string> = {
   JA_CADASTRADO: 'CNPJ ou e-mail já cadastrado.',
   SENHA_CURTA: 'A senha precisa de pelo menos 8 caracteres.',
   SENHA_LONGA: 'Senha longa demais.',
+  ARQUIVO_GRANDE: 'Arquivo grande demais — o limite é 10 MB.',
   DOCUMENTO_INVALIDO: 'Documento inválido — selecione o tipo e o arquivo.',
   CHECKLIST_PENDENTE: 'Checklist incompleto — documentos faltando ou vencidos.',
   JA_DECIDIDO: 'Este credenciamento já foi decidido.',

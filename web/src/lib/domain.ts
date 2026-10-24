@@ -170,3 +170,10 @@ export function acceptableReasons(
   reasons.push('HORARIO_COMPATIVEL', 'OUTRO');
   return reasons;
 }
+
+/** Upload ceiling shared by the API and the proxy (10 MB), less room for the
+ *  other form fields in the same request. */
+export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+export function fileTooBig(file: File): boolean {
+  return file.size > MAX_UPLOAD_BYTES - 64 * 1024;
+}

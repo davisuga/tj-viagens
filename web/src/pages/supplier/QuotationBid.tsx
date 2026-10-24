@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/u
 import { Textarea } from '@/components/ui/textarea';
 import { api, openPage, subscribeQuotation } from '@/lib/api';
 import {
-  divergenceLabel, docIssue, fmtConnections, fmtCpf, fmtDateOnly, fmtDateTime, fmtDuration,
+  divergenceLabel, docIssue, fileTooBig, fmtConnections, fmtCpf, fmtDateOnly, fmtDateTime, fmtDuration,
   formatBRL, parseBRL, parseDuration, toBoaVistaLocalInput,
 } from '@/lib/domain';
 import { errorMessage } from '@/lib/errors';
@@ -136,6 +136,10 @@ export function SupplierQuotationPage() {
   async function submitTicket(e: FormEvent) {
     e.preventDefault();
     if (!ticketFile || !q?.passenger) return;
+    if (fileTooBig(ticketFile)) {
+      toast.error(errorMessage(new Error('ARQUIVO_GRANDE')));
+      return;
+    }
     const cents = parseBRL(ticketPrice);
     if (cents === null) {
       toast.error('Valor do bilhete inválido.');
@@ -441,6 +445,7 @@ export function SupplierQuotationPage() {
                   onChange={(e) => setTicketFile(e.target.files?.[0] ?? null)}
                   required
                 />
+                <p className="text-xs text-muted-foreground">Até 10 MB.</p>
               </div>
               <Button
                 type="submit"
