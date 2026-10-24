@@ -33,6 +33,8 @@ export async function api<T>(
     if (!location.pathname.startsWith('/login')) location.href = '/login';
   }
   if (!res.ok) {
+    // The proxy answers an oversized upload with an HTML 413 before the API sees it.
+    if (res.status === 413) throw new Error('ARQUIVO_GRANDE');
     const detail = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(detail.error ?? `HTTP ${res.status}`);
   }

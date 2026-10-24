@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::audit::{append_audit, append_audit_tx, AuditInput};
 use crate::auth::{AuthUser, Claims, Staff};
+use crate::domain::sei::normalize_sei_process;
 use crate::domain::timefmt::fmt_boa_vista;
 use crate::domain::types::{QuotationStatus, Role, SupplierStatus};
 use crate::error::{ApiError, ApiResult};
@@ -23,7 +24,7 @@ pub const QUOTATION_COLUMNS: &str =
     "id, code, status, passenger_name, passenger_cpf, passenger_sex, passenger_birth, \
      origin, destination, departure_at, return_at, reference_flight, reference_price_cents, \
      opens_at, closes_at, awarded_proposal_id, awarded_at, award_justification, \
-     ticket_deadline_at, created_by, created_at";
+     ticket_deadline_at, created_by, created_at, sei_process, award_reason, award_snapshot";
 
 pub async fn fetch_quotation(pool: &PgPool, id: Uuid) -> ApiResult<Option<QuotationRow>> {
     Ok(sqlx::query_as::<_, QuotationRow>(&format!(
@@ -37,7 +38,8 @@ pub async fn fetch_quotation(pool: &PgPool, id: Uuid) -> ApiResult<Option<Quotat
 /// Always ordered (price asc, submitted_at asc) — this IS the ranking order (R6).
 pub async fn fetch_proposals(pool: &PgPool, quotation_id: Uuid) -> ApiResult<Vec<ProposalRow>> {
     Ok(sqlx::query_as::<_, ProposalRow>(
-        "SELECT id, quotation_id, supplier_id, total_price_cents, flight_info, notes, submitted_at \
+        "SELECT id, quotation_id, supplier_id, total_price_cents, flight_info, notes, submitted_at, \
+         airline, departs_at, duration_minutes, connections \
          FROM proposals WHERE quotation_id = $1 \
          ORDER BY total_price_cents ASC, submitted_at ASC",
     )
@@ -110,6 +112,7 @@ pub async fn require_active_supplier(pool: &PgPool, claims: &Claims) -> ApiResul
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CreateBody {
+    sei_process: String,
     passenger_name: String,
     passenger_cpf: String,
     passenger_sex: String,
@@ -137,19 +140,20 @@ async fn create(
     if body.reference_price_cents <= 0 {
         return Err(ApiError::Unprocessable("PRECO_INVALIDO"));
     }
+    let sei_process = normalize_sei_process(&body.sei_process).map_err(ApiError::Unprocessable)?;
     let id = Uuid::new_v4();
     let code = next_code(&state.pool, "COT").await?;
     sqlx::query(
         "INSERT INTO quotations \
          (id, code, passenger_name, passenger_cpf, passenger_sex, passenger_birth, \
           origin, destination, departure_at, return_at, reference_flight, \
-          reference_price_cents, created_by) \
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
+          reference_price_cents, created_by, sei_process) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)",
     )
     .bind(id).bind(&code).bind(&body.passenger_name).bind(&cpf).bind(&body.passenger_sex)
     .bind(body.passenger_birth).bind(&body.origin).bind(&body.destination)
     .bind(body.departure_at).bind(body.return_at).bind(&body.reference_flight)
-    .bind(body.reference_price_cents).bind(claims.sub)
+    .bind(body.reference_price_cents).bind(claims.sub).bind(&sei_process)
     .execute(&state.pool)
     .await?;
     append_audit(&state.pool, AuditInput {
@@ -159,7 +163,7 @@ async fn create(
         entity: "Quotation",
         entity_id: id.to_string(),
         quotation_id: Some(id),
-        payload: json!({ "code": code }),
+        payload: json!({ "code": code, "seiProcess": sei_process }),
     })
     .await?;
     let q = fetch_quotation(&state.pool, id)

@@ -26,7 +26,7 @@
 <header>
   <h1>TRIBUNAL DE JUSTIÇA DE RORAIMA</h1>
   <h2>ORDEM DE SERVIÇO {{ number }}</h2>
-  <p>Cotação {{ code }} · Emitida em {{ issued_at }}</p>
+  <p>Cotação {{ code }} · Processo SEI {{ sei_process }} · Emitida em {{ issued_at }}</p>
 </header>
 <section>
   <h3>Fornecedor vencedor</h3>
@@ -49,7 +49,7 @@
   <table>
     <tr><td>Trecho</td><td>{{ origin }} → {{ destination }}</td></tr>
     <tr><td>Embarque</td><td>{{ departure_at }}</td></tr>
-    <tr><td>Voo ofertado</td><td>{{ flight_info }}</td></tr>
+    <tr><td>Voo ofertado</td><td>{{ itinerary }}</td></tr>
     <tr><td>Valor contratado</td><td class="price">{{ price }}</td></tr>
   </table>
   <p>Prazo para envio do e-ticket: 30 minutos após a declaração da vencedora.</p>

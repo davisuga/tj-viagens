@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::audit::{append_audit_tx, AuditInput};
 use crate::auth::Staff;
+use crate::domain::award::{check_award, AwardReason, Candidate};
 use crate::domain::timefmt::fmt_boa_vista;
 use crate::domain::types::QuotationStatus;
 use crate::error::{ApiError, ApiResult};
@@ -17,7 +18,15 @@ use crate::sse::publish;
 use crate::App;
 
 use super::quotations::{fetch_proposals, load_quotation, next_code};
-use super::views::{effective_status, staff_view};
+use super::suppliers::{supplier_eligibility, Eligibility};
+use super::views::{effective_status, staff_view, ProposalRow};
+
+fn eligibility_json(e: Option<&Eligibility>) -> Value {
+    match e {
+        Some(e) => json!({ "eligible": e.eligible, "supplierStatus": e.status, "docs": e.checklist.docs }),
+        None => json!({ "eligible": false, "supplierStatus": Value::Null, "docs": [] }),
+    }
+}
 
 async fn ranking(
     State(state): State<App>,
@@ -46,6 +55,9 @@ async fn ranking(
             .await?;
     let by_id: HashMap<Uuid, (String, String)> =
         suppliers.into_iter().map(|(id, name, cnpj)| (id, (name, cnpj))).collect();
+    // Current eligibility: what the servidor needs while deciding. After the award
+    // the dossiê reads the decision-time snapshot instead (award_snapshot).
+    let eligibility = supplier_eligibility(&state.pool, &supplier_ids).await?;
     let ranking: Vec<Value> = proposals
         .iter()
         .enumerate()
@@ -58,8 +70,13 @@ async fn ranking(
                 "totalPriceCents": p.total_price_cents,
                 "flightInfo": p.flight_info,
                 "notes": p.notes,
+                "airline": p.airline,
+                "departsAt": p.departs_at.map(|d| d.to_rfc3339()),
+                "durationMinutes": p.duration_minutes,
+                "connections": p.connections,
                 "submittedAt": p.submitted_at.to_rfc3339(),
                 "deltaFromReferenceCents": p.total_price_cents - q.reference_price_cents,
+                "habilitacao": eligibility_json(eligibility.get(&p.supplier_id)),
             })
         })
         .collect();
@@ -74,7 +91,22 @@ async fn ranking(
 #[serde(rename_all = "camelCase")]
 struct AwardBody {
     proposal_id: Uuid,
+    /// Defaults to MENOR_PRECO, which is then verified like any other claim.
+    reason: Option<String>,
     justification: String,
+}
+
+fn candidates(proposals: &[ProposalRow], eligibility: &HashMap<Uuid, Eligibility>) -> Vec<Candidate> {
+    proposals
+        .iter()
+        .map(|p| Candidate {
+            proposal_id: p.id,
+            price_cents: p.total_price_cents,
+            duration_minutes: p.duration_minutes,
+            connections: p.connections,
+            eligible: eligibility.get(&p.supplier_id).is_some_and(|e| e.eligible),
+        })
+        .collect()
 }
 
 async fn award(
@@ -83,9 +115,10 @@ async fn award(
     Path(id): Path<Uuid>,
     Json(body): Json<AwardBody>,
 ) -> ApiResult<Json<Value>> {
-    if body.justification.trim().len() < 5 {
-        return Err(ApiError::Unprocessable("JUSTIFICATIVA_CURTA"));
-    }
+    let reason = match body.reason.as_deref() {
+        None => AwardReason::MenorPreco,
+        Some(code) => AwardReason::parse(code).ok_or(ApiError::Unprocessable("MOTIVO_INVALIDO"))?,
+    };
     let now = Utc::now();
     let Some(q) = load_quotation(&state, id, now).await? else {
         return Err(ApiError::NotFound("NAO_ENCONTRADA"));
@@ -101,9 +134,36 @@ async fn award(
         }
     }
     let proposals = fetch_proposals(&state.pool, id).await?;
+    let supplier_ids: Vec<Uuid> = proposals.iter().map(|p| p.supplier_id).collect();
+    // Certidões are checked now, at the decision, not at homologation: a supplier
+    // credenciado months ago may have a CRF that lapsed last week.
+    let eligibility = supplier_eligibility(&state.pool, &supplier_ids).await?;
+    let check = check_award(
+        &candidates(&proposals, &eligibility),
+        body.proposal_id,
+        reason,
+        &body.justification,
+    )
+    .map_err(ApiError::Unprocessable)?;
     let Some(winner) = proposals.iter().find(|p| p.id == body.proposal_id) else {
         return Err(ApiError::Unprocessable("PROPOSTA_INVALIDA"));
     };
+    // What the servidor decided on, frozen: eligibility cannot be recomputed later
+    // because certidões keep expiring and being replaced.
+    let snapshot = json!({
+        "decidedAt": now.to_rfc3339(),
+        "reason": reason.as_str(),
+        "baselineProposalId": check.baseline_proposal_id.to_string(),
+        "baselinePriceCents": check.baseline_price_cents,
+        "bids": proposals.iter().enumerate().map(|(i, p)| {
+            let mut entry = eligibility_json(eligibility.get(&p.supplier_id));
+            let obj = entry.as_object_mut().expect("eligibility is an object");
+            obj.insert("position".into(), json!(i + 1));
+            obj.insert("proposalId".into(), json!(p.id.to_string()));
+            obj.insert("supplierId".into(), json!(p.supplier_id.to_string()));
+            entry
+        }).collect::<Vec<_>>(),
+    });
     let deadline = now + Duration::minutes(state.config.ticket_window_minutes);
     // Award + OS number + both audit entries + winner notification commit ATOMICALLY.
     // The guarded UPDATE makes a double-submit lose with 422 (single-shot), and a
@@ -111,9 +171,11 @@ async fn award(
     let mut tx = state.pool.begin().await?;
     let updated = sqlx::query(
         "UPDATE quotations SET status = 'AWARDED', awarded_proposal_id = $1, awarded_at = $2, \
-         award_justification = $3, ticket_deadline_at = $4 WHERE id = $5 AND status = 'CLOSED'",
+         award_justification = $3, ticket_deadline_at = $4, award_reason = $5, award_snapshot = $6 \
+         WHERE id = $7 AND status = 'CLOSED'",
     )
-    .bind(winner.id).bind(now).bind(&body.justification).bind(deadline).bind(id)
+    .bind(winner.id).bind(now).bind(body.justification.trim()).bind(deadline)
+    .bind(reason.as_str()).bind(&snapshot).bind(id)
     .execute(&mut *tx)
     .await?;
     if updated.rows_affected() == 0 {
@@ -125,7 +187,6 @@ async fn award(
         .execute(&mut *tx)
         .await?;
     let position = proposals.iter().position(|p| p.id == winner.id).map(|i| i as i64 + 1);
-    let lowest_price_cents = proposals.first().map(|p| p.total_price_cents);
     append_audit_tx(&mut tx, AuditInput {
         actor_id: Some(claims.sub),
         actor_role: Some(claims.role.as_str()),
@@ -138,8 +199,14 @@ async fn award(
             "supplierId": winner.supplier_id.to_string(),
             "totalPriceCents": winner.total_price_cents,
             "position": position,
-            "lowestPriceCents": lowest_price_cents,
-            "justification": body.justification
+            // Same meaning as in events written before eligibility existed: the
+            // cheapest bid overall, eligible or not.
+            "lowestPriceCents": proposals.first().map(|p| p.total_price_cents),
+            "reason": reason.as_str(),
+            "isLowestEligiblePrice": check.is_lowest_price,
+            "lowestEligiblePriceCents": check.baseline_price_cents,
+            "justification": body.justification.trim(),
+            "snapshot": snapshot,
         }),
     })
     .await?;

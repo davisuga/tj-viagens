@@ -9,16 +9,76 @@ import { LivePill } from '@/components/LivePill';
 import { StatusBadge } from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { api, openPage, subscribeQuotation } from '@/lib/api';
-import { divergenceLabel, fmtCpf, fmtDateTime, formatBRL } from '@/lib/domain';
+import {
+  AWARD_REASON_LABELS, acceptableReasons, divergenceLabel, docIssue, fmtConnections, fmtCpf,
+  fmtDateTime, fmtDuration, formatBRL, tradeOffLine,
+} from '@/lib/domain';
 import { errorMessage } from '@/lib/errors';
 import {
-  proposalsCount, type RankingRow, type Report, type StaffQuotation,
+  proposalsCount, type AwardReason, type RankingRow, type Report, type StaffQuotation,
 } from '@/lib/types';
+
+const PRICE_JUSTIFICATION = 'Menor preço entre as propostas habilitadas.';
+const DEVIATION_MIN = 15;
+
+/** Airline + flights, then departure · duration · connections. Bids from before
+ *  the structured itinerary only have the free-text flight. */
+function ItineraryCell({ r }: { r: RankingRow }) {
+  if (r.airline === null || r.departsAt === null || r.durationMinutes === null || r.connections === null) {
+    return <span>{r.flightInfo}</span>;
+  }
+  return (
+    <div>
+      <p>
+        {r.airline} {r.flightInfo}
+      </p>
+      {/* Each piece stays whole; lines only break between them. */}
+      <p className="text-xs text-muted-foreground">
+        <span className="whitespace-nowrap">saída {fmtDateTime(r.departsAt)}</span> ·{' '}
+        <span className="whitespace-nowrap">{fmtDuration(r.durationMinutes)}</span> ·{' '}
+        <span className="whitespace-nowrap">{fmtConnections(r.connections)}</span>
+      </p>
+    </div>
+  );
+}
+
+function HabilitacaoCell({ r }: { r: RankingRow }) {
+  const issues = r.habilitacao.docs.flatMap((d) => {
+    const issue = docIssue(d);
+    return issue ? [issue] : [];
+  });
+  if (!r.habilitacao.eligible) {
+    const why = issues.filter((i) => i.level === 'block').map((i) => i.text);
+    if (r.habilitacao.supplierStatus !== 'ACTIVE') why.unshift('credenciamento inativo');
+    return <span className="text-xs text-red-700">✘ {why.join('; ')}</span>;
+  }
+  return (
+    <div className="text-xs">
+      <p className="text-emerald-700">✔ habilitada</p>
+      {issues.map((i) => (
+        <p key={i.text} className="text-amber-700">
+          {i.text}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+function Tag({ children, tone }: { children: string; tone: 'emerald' | 'sky' }) {
+  const colors = tone === 'emerald' ? 'bg-emerald-100 text-emerald-800' : 'bg-sky-100 text-sky-800';
+  return (
+    <span className={`ml-2 inline-block whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${colors}`}>
+      {children}
+    </span>
+  );
+}
 
 /** One line of the deterministic conference: the expected value (which the SPA
  *  has) plus the backend's verdict for that field. The ticket's own extracted
@@ -49,7 +109,8 @@ export function StaffQuotationDetail() {
   const queryClient = useQueryClient();
   const [pending, setPending] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
-  const [justification, setJustification] = useState('Menor preço entre as propostas válidas.');
+  const [justification, setJustification] = useState(PRICE_JUSTIFICATION);
+  const [reason, setReason] = useState<AwardReason>('MENOR_PRECO');
   const [confirming, setConfirming] = useState<null | 'open' | 'award' | 'conclude'>(null);
   const [liveDown, setLiveDown] = useState(false);
 
@@ -100,16 +161,30 @@ export function StaffQuotationDetail() {
   // Route param change reuses this component instance — reset per-quotation state.
   useEffect(() => {
     setSelected(null);
-    setJustification('Menor preço entre as propostas válidas.');
+    setJustification(PRICE_JUSTIFICATION);
+    setReason('MENOR_PRECO');
     setConfirming(null);
   }, [id]);
 
-  // recommended winner: lowest price pre-selected (UX: one-click adjudication).
+  // Recommended winner: the lowest ELIGIBLE price, pre-selected (one-click
+  // adjudication). A cheaper bid from a supplier with a lapsed certidão cannot win.
   // Only while CLOSED — historical views (AWARDED+) are read-only.
   useEffect(() => {
-    const first = ranking.data?.ranking[0];
+    const first = ranking.data?.ranking.find((r) => r.habilitacao.eligible);
     if (q?.status === 'CLOSED' && first && selected === null) setSelected(first.proposalId);
   }, [q?.status, ranking.data, selected]);
+
+  // Picking another bid resets the decision text: price justifies the cheapest
+  // eligible bid; anything else starts blank and has to be explained.
+  function choose(row: RankingRow) {
+    if (!row.habilitacao.eligible) return;
+    setSelected(row.proposalId);
+    const cheapest = ranking.data?.ranking.find((r) => r.habilitacao.eligible);
+    if (!cheapest) return;
+    const reasons = acceptableReasons(row, cheapest);
+    setReason(reasons[0]);
+    setJustification(reasons[0] === 'MENOR_PRECO' ? PRICE_JUSTIFICATION : '');
+  }
 
   async function act(path: string, body?: unknown, success?: string): Promise<boolean> {
     setPending(true);
@@ -165,6 +240,21 @@ export function StaffQuotationDetail() {
     ? ranking.data?.ranking.find((r) => r.proposalId === q.awardedProposalId) ?? null
     : null;
   const selectedRow = ranking.data?.ranking.find((r) => r.proposalId === selected) ?? null;
+  const eligibleRows = ranking.data?.ranking.filter((r) => r.habilitacao.eligible) ?? [];
+  const cheapest = eligibleRows[0] ?? null;
+  const fastest = eligibleRows.reduce<RankingRow | null>(
+    (best, r) =>
+      r.durationMinutes !== null && (best === null || r.durationMinutes < (best.durationMinutes ?? Infinity))
+        ? r
+        : best,
+    null,
+  );
+  const reasons = selectedRow && cheapest ? acceptableReasons(selectedRow, cheapest) : [];
+  const deviation = reasons.length > 0 && reasons[0] !== 'MENOR_PRECO';
+  const canAward =
+    selectedRow !== null &&
+    reasons.includes(reason) &&
+    justification.trim().length >= (deviation ? DEVIATION_MIN : 5);
   const ticket = report.data?.ticket ?? null;
 
   return (
@@ -185,6 +275,7 @@ export function StaffQuotationDetail() {
               Passageiro: {q.passenger.name} · CPF {fmtCpf(q.passenger.cpf)}
             </p>
             <p>Embarque: {fmtDateTime(q.departureAt)}</p>
+            <p>Processo SEI: {q.seiProcess ?? '—'}</p>
             <p>Voo de referência: {q.referenceFlight}</p>
             <p className="font-medium text-foreground">
               🔒 Preço de referência (sigiloso): {formatBRL(q.referencePriceCents)}
@@ -254,7 +345,9 @@ export function StaffQuotationDetail() {
                 ? 'Disputa encerrada — proposta vencedora destacada.'
                 : ranking.data?.ranking.length === 0
                   ? 'A janela encerrou sem propostas.'
-                  : 'A 1ª colocada já vem selecionada. Confira a conformidade e declare a vencedora.'}
+                  : eligibleRows.length === 0
+                  ? 'Nenhuma proposta habilitada — todas as fornecedoras têm certidão vencida ou faltando.'
+                  : 'A proposta de menor preço habilitada já vem selecionada. Para escolher outra, informe o motivo.'}
             </p>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -294,8 +387,8 @@ export function StaffQuotationDetail() {
                       <TableHead>Fornecedor</TableHead>
                       <TableHead>Valor</TableHead>
                       <TableHead>Δ vs referência</TableHead>
-                      <TableHead>Voo</TableHead>
-                      <TableHead>Enviada às</TableHead>
+                      <TableHead>Itinerário</TableHead>
+                      {isClosed && <TableHead>Habilitação</TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -307,14 +400,16 @@ export function StaffQuotationDetail() {
                           index={index}
                           className={
                             isClosed
-                              ? selected === r.proposalId
-                                ? 'bg-primary/5'
-                                : ''
+                              ? !r.habilitacao.eligible
+                                ? 'opacity-60'
+                                : selected === r.proposalId
+                                  ? 'bg-primary/5'
+                                  : ''
                               : isWinnerRow
                                 ? 'bg-primary/5 font-medium'
                                 : ''
                           }
-                          onClick={isClosed ? () => setSelected(r.proposalId) : undefined}
+                          onClick={isClosed ? () => choose(r) : undefined}
                         >
                           {isClosed && (
                             <TableCell>
@@ -323,17 +418,23 @@ export function StaffQuotationDetail() {
                                 name="winner"
                                 aria-label={`Selecionar ${r.supplier.legalName}`}
                                 checked={selected === r.proposalId}
-                                onChange={() => setSelected(r.proposalId)}
+                                disabled={!r.habilitacao.eligible}
+                                onChange={() => choose(r)}
                               />
                             </TableCell>
                           )}
                           <TableCell>
                             {r.position}º {r.supplier.legalName}
-                            {!isClosed && isWinnerRow && (
-                              <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
-                                Vencedora
-                              </span>
+                            {!isClosed && isWinnerRow && <Tag tone="emerald">Vencedora</Tag>}
+                            {isClosed && cheapest?.proposalId === r.proposalId && (
+                              <Tag tone="emerald">mais barata</Tag>
                             )}
+                            {isClosed &&
+                              fastest?.proposalId === r.proposalId &&
+                              cheapest?.proposalId !== r.proposalId && <Tag tone="sky">mais rápida</Tag>}
+                            <p className="text-xs text-muted-foreground">
+                              enviada às {fmtDateTime(r.submittedAt)}
+                            </p>
                           </TableCell>
                           <TableCell className="font-semibold">
                             {formatBRL(r.totalPriceCents)}
@@ -345,24 +446,65 @@ export function StaffQuotationDetail() {
                           >
                             {formatBRL(r.deltaFromReferenceCents)}
                           </TableCell>
-                          <TableCell>{r.flightInfo}</TableCell>
-                          <TableCell>{fmtDateTime(r.submittedAt)}</TableCell>
+                          <TableCell>
+                            <ItineraryCell r={r} />
+                          </TableCell>
+                          {isClosed && (
+                            <TableCell>
+                              <HabilitacaoCell r={r} />
+                            </TableCell>
+                          )}
                         </TableRow>
                       );
                     })}
                   </TableBody>
                 </Table>
                 {isClosed ? (
+                  eligibleRows.length === 0 ? null : (
                   <>
-                    <Textarea
-                      value={justification}
-                      onChange={(e) => setJustification(e.target.value)}
-                      aria-label="Justificativa"
-                    />
-                    <Button
-                      disabled={selected === null || justification.trim().length < 5}
-                      onClick={() => setConfirming('award')}
-                    >
+                    {deviation && selectedRow && cheapest && (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                        <p className="font-medium">
+                          Proposta mais cara que a de menor preço habilitada (
+                          {cheapest.supplier.legalName}, {formatBRL(cheapest.totalPriceCents)}).
+                        </p>
+                        <p>{tradeOffLine(selectedRow, cheapest)}.</p>
+                      </div>
+                    )}
+                    {deviation && (
+                      <div className="space-y-1.5">
+                        <Label htmlFor="awardReason">Motivo da escolha</Label>
+                        <Select value={reason} onValueChange={(v) => setReason(v as AwardReason)}>
+                          <SelectTrigger id="awardReason" placeholder="Motivo" className="w-full md:w-[28rem]" />
+                          <SelectContent>
+                            {reasons.map((value, index) => (
+                              <SelectItem key={value} index={index} value={value}>
+                                {AWARD_REASON_LABELS[value]}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                    <div className="space-y-1.5">
+                      <Label htmlFor="justification">Justificativa</Label>
+                      <Textarea
+                        id="justification"
+                        value={justification}
+                        onChange={(e) => setJustification(e.target.value)}
+                        placeholder={
+                          deviation
+                            ? 'Explique por que esta proposta atende melhor o TJRR (ex.: chegada antes da audiência das 14h).'
+                            : undefined
+                        }
+                      />
+                      {deviation && (
+                        <p className="text-xs text-muted-foreground">
+                          Vai para o relatório anexado ao SEI · mínimo {DEVIATION_MIN} caracteres.
+                        </p>
+                      )}
+                    </div>
+                    <Button disabled={!canAward} onClick={() => setConfirming('award')}>
                       Declarar vencedora e emitir OS
                     </Button>
                     <ConfirmDialog
@@ -374,7 +516,7 @@ export function StaffQuotationDetail() {
                       onConfirm={() =>
                         void confirmAction(
                           'award',
-                          { proposalId: selected, justification },
+                          { proposalId: selected, reason, justification },
                           'Vencedora declarada — Ordem de Serviço emitida.',
                         )
                       }
@@ -383,9 +525,15 @@ export function StaffQuotationDetail() {
                         <div className="space-y-2 text-sm">
                           <p>
                             <span className="font-semibold">{selectedRow.supplier.legalName}</span>{' '}
-                            — {formatBRL(selectedRow.totalPriceCents)} (
-                            {formatBRL(selectedRow.deltaFromReferenceCents)} vs referência)
+                            — {formatBRL(selectedRow.totalPriceCents)}{' '}
+                            <span className="whitespace-nowrap">
+                              ({formatBRL(selectedRow.deltaFromReferenceCents)} vs referência)
+                            </span>
                           </p>
+                          <p>Motivo: {AWARD_REASON_LABELS[reason]}</p>
+                          {deviation && cheapest && (
+                            <p className="text-amber-800">{tradeOffLine(selectedRow, cheapest)}.</p>
+                          )}
                           <p className="text-muted-foreground">
                             A adjudicação é definitiva: a Ordem de Serviço será emitida e a
                             vencedora terá 30 minutos para anexar o e-ticket.
@@ -394,6 +542,7 @@ export function StaffQuotationDetail() {
                       )}
                     </ConfirmDialog>
                   </>
+                  )
                 ) : (
                   winnerRow && (
                     <div className="text-sm">
@@ -403,6 +552,9 @@ export function StaffQuotationDetail() {
                         {formatBRL(winnerRow.totalPriceCents)}
                         {q.awardedAt && <> · adjudicada em {fmtDateTime(q.awardedAt)}</>}
                       </p>
+                      {q.awardReason && (
+                        <p className="mt-1">Motivo: {AWARD_REASON_LABELS[q.awardReason]}</p>
+                      )}
                       {q.awardJustification && (
                         <p className="mt-1 italic text-muted-foreground">
                           Justificativa: “{q.awardJustification}”

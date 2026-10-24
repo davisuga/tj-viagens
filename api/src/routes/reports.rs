@@ -9,16 +9,105 @@ use uuid::Uuid;
 
 use crate::audit::{list_events, verify_chain};
 use crate::auth::{AuthUser, Staff};
+use crate::domain::award::AwardReason;
 use crate::domain::brl::format_brl;
+use crate::domain::checklist::{DocState, DocStatus};
 use crate::domain::cpf::{format_cpf, mask_cpf};
+use crate::domain::decision::{compare_with_baseline, BidSummary};
 use crate::domain::economy::compute_economy;
+use crate::domain::itinerary::{fmt_connections, fmt_duration};
 use crate::domain::timefmt::fmt_boa_vista;
-use crate::domain::types::Role;
+use crate::domain::types::{DocType, Role, SupplierStatus};
 use crate::error::{ApiError, ApiResult};
-use crate::html::{OsTemplate, ReportEvent, ReportProposal, ReportTemplate};
+use crate::html::{OsTemplate, ReportDoc, ReportEvent, ReportProposal, ReportTemplate};
 use crate::App;
 
 use super::quotations::fetch_proposals;
+use super::views::ProposalRow;
+
+/// "GOL G3-1720 / G3-1450 · saída 20/09/2026 08:30 · 8h50 · 1 conexão". Bids from
+/// before the structured itinerary only carry the free-text flight.
+fn itinerary_line(p: &ProposalRow) -> String {
+    if let (Some(airline), Some(departs_at), Some(duration), Some(connections)) =
+        (&p.airline, p.departs_at, p.duration_minutes, p.connections)
+    {
+        format!(
+            "{airline} {} · saída {} · {} · {}",
+            p.flight_info,
+            fmt_boa_vista(departs_at),
+            fmt_duration(duration),
+            fmt_connections(connections)
+        )
+    } else {
+        p.flight_info.clone()
+    }
+}
+
+/// The award snapshot entry for one bid (see award.rs).
+fn snapshot_bid(snapshot: Option<&Value>, proposal_id: Uuid) -> Option<&Value> {
+    let id = proposal_id.to_string();
+    snapshot?
+        .get("bids")?
+        .as_array()?
+        .iter()
+        .find(|b| b.get("proposalId").and_then(Value::as_str) == Some(id.as_str()))
+}
+
+fn snapshot_docs(entry: &Value) -> Vec<DocStatus> {
+    serde_json::from_value(entry.get("docs").cloned().unwrap_or(Value::Null)).unwrap_or_default()
+}
+
+fn doc_label(code: &str) -> &str {
+    DocType::parse(code).map(|t| t.label()).unwrap_or(code)
+}
+
+/// Why a bid was not eligible at the award, in plain words; None when it was.
+fn ineligibility(entry: &Value) -> Option<String> {
+    if entry.get("eligible").and_then(Value::as_bool) == Some(true) {
+        return None;
+    }
+    let mut reasons: Vec<String> = Vec::new();
+    match entry.get("supplierStatus").and_then(Value::as_str).and_then(SupplierStatus::parse) {
+        Some(SupplierStatus::Active) => {}
+        Some(SupplierStatus::Pending) => reasons.push("credenciamento pendente".to_string()),
+        Some(SupplierStatus::Rejected) => reasons.push("credenciamento rejeitado".to_string()),
+        Some(SupplierStatus::Suspended) => reasons.push("credenciamento suspenso".to_string()),
+        None => reasons.push("credenciamento não localizado".to_string()),
+    }
+    for doc in snapshot_docs(entry) {
+        match doc.state {
+            DocState::Ok | DocState::Expiring => {}
+            DocState::Expired => reasons.push(format!(
+                "{} vencida em {}",
+                doc_label(&doc.doc_type),
+                doc.valid_until.map(|d| d.format("%d/%m/%Y").to_string()).unwrap_or_default()
+            )),
+            DocState::Missing => reasons.push(format!("{} ausente", doc_label(&doc.doc_type))),
+        }
+    }
+    Some(reasons.join("; "))
+}
+
+fn doc_validity(doc: &DocStatus) -> String {
+    let date = doc.valid_until.map(|d| d.format("%d/%m/%Y").to_string());
+    match doc.state {
+        DocState::Missing => "ausente".to_string(),
+        DocState::Expired => format!("vencida em {}", date.unwrap_or_default()),
+        DocState::Ok | DocState::Expiring => match date {
+            Some(d) => format!("válida até {d}"),
+            None => "sem prazo de validade".to_string(),
+        },
+    }
+}
+
+fn summary<'a>(p: &ProposalRow, supplier: &'a str) -> BidSummary<'a> {
+    BidSummary {
+        supplier,
+        price_cents: p.total_price_cents,
+        duration_minutes: p.duration_minutes,
+        connections: p.connections,
+    }
+}
 
 async fn audit_verify(State(state): State<App>, Staff(_claims): Staff) -> ApiResult<Json<Value>> {
     Ok(Json(verify_chain(&state.pool).await?))
@@ -101,7 +190,7 @@ async fn report_json(
     Ok(Json(json!({
         "generatedAt": Utc::now().to_rfc3339(),
         "quotation": {
-            "code": d.q.code, "status": d.q.status,
+            "code": d.q.code, "status": d.q.status, "seiProcess": d.q.sei_process,
             "origin": d.q.origin, "destination": d.q.destination,
             "departureAt": d.q.departure_at.to_rfc3339(),
             "referenceFlight": d.q.reference_flight,
@@ -109,6 +198,7 @@ async fn report_json(
             "closesAt": d.q.closes_at.map(|v| v.to_rfc3339()),
             "awardedAt": d.q.awarded_at.map(|v| v.to_rfc3339()),
             "awardJustification": d.q.award_justification,
+            "awardReason": d.q.award_reason,
             "passengerName": d.q.passenger_name,
             "passengerCpfMasked": mask_cpf(&d.q.passenger_cpf),
         },
@@ -119,6 +209,8 @@ async fn report_json(
             json!({
                 "position": i + 1, "supplier": name, "cnpj": cnpj,
                 "totalPriceCents": p.total_price_cents, "flightInfo": p.flight_info,
+                "airline": p.airline, "departsAt": p.departs_at.map(|v| v.to_rfc3339()),
+                "durationMinutes": p.duration_minutes, "connections": p.connections,
                 "submittedAt": p.submitted_at.to_rfc3339()
             })
         }).collect::<Vec<_>>(),
@@ -136,6 +228,7 @@ async fn report_json(
                 "confirmedAt": confirmed_at.map(|v| v.to_rfc3339())
             })
         }),
+        "awardSnapshot": d.q.award_snapshot,
         "economy": economy,
         "timeline": events.iter().map(|e| json!({
             "seq": e.seq, "at": e.at, "type": e.event_type, "actorId": e.actor_id, "payload": e.payload
@@ -181,9 +274,10 @@ async fn service_order_page(
         origin: d.q.origin.clone(),
         destination: d.q.destination.clone(),
         departure_at: format!("{} (horário de Boa Vista)", fmt_boa_vista(d.q.departure_at)),
-        flight_info: winner.flight_info.clone(),
+        itinerary: itinerary_line(winner),
         price: format_brl(winner.total_price_cents),
         issued_at: format!("{} (horário de Boa Vista)", fmt_boa_vista(issued_at)),
+        sei_process: d.q.sei_process.clone().unwrap_or_else(|| "—".to_string()),
     };
     Ok(Html(template.render().map_err(|e| ApiError::Internal(e.to_string()))?))
 }
@@ -233,8 +327,52 @@ async fn report_page(
         ),
         None => "Ainda não enviado.".to_string(),
     };
+    let snapshot = d.q.award_snapshot.as_ref();
+    let name_of = |p: &ProposalRow| d.supplier_names.get(&p.supplier_id).cloned().unwrap_or_default();
+    let winner_position = winner.and_then(|w| d.proposals.iter().position(|p| p.id == w.id));
+    let decision_winner = match (winner, winner_position) {
+        (Some(w), Some(i)) => {
+            format!("{}ª colocada — {} — {}", i + 1, name_of(w).0, format_brl(w.total_price_cents))
+        }
+        (Some(_), None) | (None, Some(_)) | (None, None) => String::new(),
+    };
+    let baseline = snapshot
+        .and_then(|s| s.get("baselineProposalId"))
+        .and_then(Value::as_str)
+        .and_then(|id| Uuid::parse_str(id).ok())
+        .and_then(|id| d.proposals.iter().find(|p| p.id == id));
+    let decision_comparison = if let (Some(w), Some(b)) = (winner, baseline) {
+        if w.id == b.id {
+            String::new()
+        } else {
+            let (winner_name, baseline_name) = (name_of(w).0, name_of(b).0);
+            compare_with_baseline(&summary(w, &winner_name), &summary(b, &baseline_name))
+        }
+    } else {
+        String::new()
+    };
+    // Cheaper bids that lost only because the supplier was not eligible: the line
+    // the SEI file needs to show why the cheapest offer was not taken.
+    let discarded: Vec<String> = d
+        .proposals
+        .iter()
+        .enumerate()
+        .take(winner_position.unwrap_or(0))
+        .filter_map(|(i, p)| {
+            let why = ineligibility(snapshot_bid(snapshot, p.id)?)?;
+            Some(format!("{}º {} ({}) — {why}", i + 1, name_of(p).0, format_brl(p.total_price_cents)))
+        })
+        .collect();
+    let winner_docs: Vec<ReportDoc> = winner
+        .and_then(|w| snapshot_bid(snapshot, w.id))
+        .map(snapshot_docs)
+        .unwrap_or_default()
+        .iter()
+        .map(|doc| ReportDoc { label: doc_label(&doc.doc_type).to_string(), validity: doc_validity(doc) })
+        .collect();
     let template = ReportTemplate {
         code: d.q.code.clone(),
+        sei_process: d.q.sei_process.clone().unwrap_or_else(|| "—".to_string()),
         status: status_label(&d.q.status).to_string(),
         origin: d.q.origin.clone(),
         destination: d.q.destination.clone(),
@@ -249,16 +387,38 @@ async fn report_page(
             .map(|(i, p)| {
                 let (name, cnpj) =
                     d.supplier_names.get(&p.supplier_id).cloned().unwrap_or_default();
+                let (habilitacao, habilitacao_class) = match snapshot_bid(snapshot, p.id) {
+                    None => (String::new(), ""),
+                    Some(entry) => match ineligibility(entry) {
+                        None => ("✔ habilitada".to_string(), "audit-ok"),
+                        Some(why) => (format!("✘ {why}"), "audit-bad"),
+                    },
+                };
                 ReportProposal {
                     position: i + 1,
                     supplier: name,
                     cnpj,
                     price: format_brl(p.total_price_cents),
-                    flight_info: p.flight_info.clone(),
+                    itinerary: itinerary_line(p),
+                    habilitacao,
+                    habilitacao_class,
                     submitted_at: fmt_boa_vista(p.submitted_at),
                 }
             })
             .collect(),
+        has_decision: winner.is_some(),
+        decision_winner,
+        decision_reason: d
+            .q
+            .award_reason
+            .as_deref()
+            .and_then(AwardReason::parse)
+            .map(|r| r.label().to_string())
+            .unwrap_or_else(|| "—".to_string()),
+        decision_comparison,
+        decision_justification: d.q.award_justification.clone().unwrap_or_default(),
+        discarded,
+        winner_docs,
         has_economy: economy.is_some(),
         economy_saved: economy.as_ref().map(|e| format_brl(e.saved_cents)).unwrap_or_default(),
         economy_pct: economy

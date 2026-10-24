@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 use crate::audit::{append_audit_tx, AuditInput};
 use crate::auth::AuthUser;
+use crate::domain::itinerary;
 use crate::domain::types::QuotationStatus;
 use crate::error::{ApiError, ApiResult};
 use crate::sse::publish;
@@ -21,8 +22,13 @@ use super::views::effective_status;
 #[serde(rename_all = "camelCase")]
 struct ProposalBody {
     total_price_cents: i64,
+    /// Flight number(s), e.g. "G3-1720 / G3-1450".
     flight_info: String,
     notes: Option<String>,
+    airline: String,
+    departs_at: DateTime<Utc>,
+    duration_minutes: i32,
+    connections: i32,
 }
 
 async fn submit(
@@ -47,6 +53,9 @@ async fn submit(
     if body.notes.as_deref().is_some_and(|n| n.chars().count() > 2000) {
         return Err(ApiError::Unprocessable("OBSERVACOES_LONGAS"));
     }
+    itinerary::validate(&body.airline, body.duration_minutes, body.connections)
+        .map_err(ApiError::Unprocessable)?;
+    let airline = body.airline.trim().to_string();
     let now = Utc::now();
     let Some(q) = load_quotation(&state, id, now).await? else {
         return Err(ApiError::NotFound("NAO_ENCONTRADA"));
@@ -65,18 +74,24 @@ async fn submit(
     // TOCTOU between the Rust-side check above and the commit (defense-in-depth for isonomia).
     let mut tx = state.pool.begin().await?;
     let row: Option<(Uuid, DateTime<Utc>, bool)> = sqlx::query_as(
-        "INSERT INTO proposals (id, quotation_id, supplier_id, total_price_cents, flight_info, notes) \
-         SELECT $1, $2, $3, $4, $5, $6 \
+        "INSERT INTO proposals (id, quotation_id, supplier_id, total_price_cents, flight_info, notes, \
+                                airline, departs_at, duration_minutes, connections) \
+         SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10 \
          WHERE EXISTS (SELECT 1 FROM quotations WHERE id = $2 AND status = 'OPEN' AND closes_at > now()) \
          ON CONFLICT (quotation_id, supplier_id) DO UPDATE \
          SET total_price_cents = EXCLUDED.total_price_cents, \
              flight_info = EXCLUDED.flight_info, \
              notes = EXCLUDED.notes, \
+             airline = EXCLUDED.airline, \
+             departs_at = EXCLUDED.departs_at, \
+             duration_minutes = EXCLUDED.duration_minutes, \
+             connections = EXCLUDED.connections, \
              updated_at = now() \
          RETURNING id, submitted_at, (xmax = 0) AS inserted",
     )
     .bind(Uuid::new_v4()).bind(id).bind(supplier_id)
     .bind(body.total_price_cents).bind(&body.flight_info).bind(&body.notes)
+    .bind(&airline).bind(body.departs_at).bind(body.duration_minutes).bind(body.connections)
     .fetch_optional(&mut *tx)
     .await?;
     let Some((proposal_id, submitted_at, inserted)) = row else {
@@ -95,6 +110,10 @@ async fn submit(
             "totalPriceCents": body.total_price_cents,
             "flightInfo": body.flight_info,
             "notes": body.notes,
+            "airline": airline,
+            "departsAt": body.departs_at.to_rfc3339(),
+            "durationMinutes": body.duration_minutes,
+            "connections": body.connections,
         }),
     })
     .await?;

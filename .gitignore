@@ -6,3 +6,5 @@ target/
 .env
 uploads/
 demo/out/
+web/e2e/report/
+web/e2e/results/

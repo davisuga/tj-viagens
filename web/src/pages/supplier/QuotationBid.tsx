@@ -10,11 +10,27 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { api, openPage, subscribeQuotation } from '@/lib/api';
-import { divergenceLabel, fmtCpf, fmtDateOnly, fmtDateTime, formatBRL, parseBRL } from '@/lib/domain';
+import {
+  divergenceLabel, docIssue, fileTooBig, fmtConnections, fmtCpf, fmtDateOnly, fmtDateTime, fmtDuration,
+  formatBRL, parseBRL, parseDuration, toBoaVistaLocalInput,
+} from '@/lib/domain';
 import { errorMessage } from '@/lib/errors';
-import type { SupplierQuotation } from '@/lib/types';
+import type { SupplierMe, SupplierQuotation } from '@/lib/types';
+
+const CONNECTION_OPTIONS = [
+  ['0', 'Direto (sem conexão)'],
+  ['1', '1 conexão'],
+  ['2', '2 conexões'],
+  ['3', '3 ou mais'],
+] as const;
+
+/** 340 -> "5:40", the format the duration field accepts. */
+function durationInput(minutes: number): string {
+  return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}`;
+}
 
 export function SupplierQuotationPage() {
   const { id = '' } = useParams<{ id: string }>();
@@ -26,6 +42,13 @@ export function SupplierQuotationPage() {
   });
   const q = quotationQuery.data;
   const [liveDown, setLiveDown] = useState(false);
+  // Own certidões: an agency with a lapsed one can still bid, but cannot be awarded.
+  const me = useQuery({ queryKey: ['me'], queryFn: () => api<SupplierMe>('/suppliers/me') });
+  const docIssues = (me.data?.checklist.docs ?? []).flatMap((d) => {
+    const issue = docIssue(d);
+    return issue ? [issue] : [];
+  });
+  const blocked = docIssues.some((i) => i.level === 'block');
 
   useEffect(() => {
     return subscribeQuotation(id, (event) => {
@@ -41,7 +64,11 @@ export function SupplierQuotationPage() {
   }, [id, queryClient]);
 
   const [price, setPrice] = useState('');
+  const [airline, setAirline] = useState('');
   const [flightInfo, setFlightInfo] = useState('');
+  const [departsAt, setDepartsAt] = useState('');
+  const [duration, setDuration] = useState('');
+  const [connections, setConnections] = useState('1');
   const [notes, setNotes] = useState('');
   const [pending, setPending] = useState(false);
   const [ticketPrice, setTicketPrice] = useState('');
@@ -58,8 +85,17 @@ export function SupplierQuotationPage() {
       setPrice((mine.totalPriceCents / 100).toFixed(2).replace('.', ','));
       setFlightInfo(mine.flightInfo);
       setNotes(mine.notes ?? '');
+      // Bids from before the structured itinerary come back blank and must be completed.
+      setAirline(mine.airline ?? '');
+      setDepartsAt(mine.departsAt ? toBoaVistaLocalInput(mine.departsAt) : '');
+      setDuration(mine.durationMinutes !== null ? durationInput(mine.durationMinutes) : '');
+      setConnections(String(Math.min(mine.connections ?? 1, 3)));
     }
   }, [q?.myProposal]);
+
+  // Until the agency edits it, departure shows the requested one, so a first bid
+  // only adjusts the time.
+  const departsValue = departsAt || (q ? toBoaVistaLocalInput(q.departureAt) : '');
 
   async function submitBid(e: FormEvent) {
     e.preventDefault();
@@ -68,11 +104,25 @@ export function SupplierQuotationPage() {
       toast.error('Valor inválido — use o formato 1.523,00');
       return;
     }
+    const minutes = parseDuration(duration);
+    if (minutes === null) {
+      toast.error('Duração inválida — use horas:minutos, ex.: 5:40');
+      return;
+    }
     setPending(true);
     try {
       await api(`/quotations/${id}/proposals`, {
         method: 'POST',
-        body: { totalPriceCents: cents, flightInfo, notes: notes || null },
+        body: {
+          totalPriceCents: cents,
+          airline,
+          flightInfo,
+          // datetime-local has no timezone; the field is labeled Boa Vista time.
+          departsAt: new Date(departsValue + ':00-04:00').toISOString(),
+          durationMinutes: minutes,
+          connections: Number(connections),
+          notes: notes || null,
+        },
       });
       toast.success('Proposta registrada. Enviar novamente substitui o valor.');
       await queryClient.invalidateQueries({ queryKey: ['quotation', id] });
@@ -86,6 +136,10 @@ export function SupplierQuotationPage() {
   async function submitTicket(e: FormEvent) {
     e.preventDefault();
     if (!ticketFile || !q?.passenger) return;
+    if (fileTooBig(ticketFile)) {
+      toast.error(errorMessage(new Error('ARQUIVO_GRANDE')));
+      return;
+    }
     const cents = parseBRL(ticketPrice);
     if (cents === null) {
       toast.error('Valor do bilhete inválido.');
@@ -173,14 +227,32 @@ export function SupplierQuotationPage() {
         )}
       </Card>
 
+      {q.status === 'OPEN' && docIssues.length > 0 && (
+        <div
+          className={`mt-4 rounded-lg border p-3 text-sm ${
+            blocked ? 'border-red-200 bg-red-50 text-red-800' : 'border-amber-200 bg-amber-50 text-amber-900'
+          }`}
+        >
+          <p className="font-medium">{docIssues.map((i) => i.text).join(' · ')}</p>
+          <p className="mt-1">
+            {blocked
+              ? 'Você pode enviar a proposta, mas o TJRR não pode adjudicar fornecedor com certidão vencida ou faltando. Atualize em Início antes do encerramento.'
+              : 'Renove antes de vencer: com certidão vencida a proposta não pode ser adjudicada.'}
+          </p>
+        </div>
+      )}
+
       {q.status === 'OPEN' && (
         <Card className="mt-4">
           <CardHeader>
             <CardTitle className="text-base">Minha proposta (sigilosa)</CardTitle>
             {q.myProposal && (
               <p className="text-sm text-muted-foreground">
-                Registrada: {formatBRL(q.myProposal.totalPriceCents)} às{' '}
-                {fmtDateTime(q.myProposal.submittedAt)} — enviar novamente substitui.
+                Registrada: {formatBRL(q.myProposal.totalPriceCents)}
+                {q.myProposal.durationMinutes !== null && q.myProposal.connections !== null
+                  ? ` · ${fmtDuration(q.myProposal.durationMinutes)}, ${fmtConnections(q.myProposal.connections)}`
+                  : ''}{' '}
+                às {fmtDateTime(q.myProposal.submittedAt)} — enviar novamente substitui.
               </p>
             )}
           </CardHeader>
@@ -203,18 +275,83 @@ export function SupplierQuotationPage() {
                   </p>
                 )}
               </div>
+              {/* Phone-first: the datetime and the flight numbers need the full width
+                  at 390px or the time and the second flight get clipped. */}
+              <div className="grid grid-cols-2 gap-3">
+                {/* min-w-0: grid items default to min-content width, which let the
+                    select's trigger push past the card edge at 390px. */}
+                <div className="min-w-0 space-y-1.5">
+                  <Label htmlFor="airline">Companhia</Label>
+                  <Input
+                    id="airline"
+                    list="airlines"
+                    placeholder="GOL"
+                    value={airline}
+                    onChange={(e) => setAirline(e.target.value)}
+                    required
+                  />
+                  <datalist id="airlines">
+                    <option value="LATAM" />
+                    <option value="GOL" />
+                    <option value="Azul" />
+                  </datalist>
+                </div>
+                <div className="min-w-0 space-y-1.5">
+                  <Label htmlFor="connections">Conexões</Label>
+                  {/* Fluid Functionalism Select: value display comes from the selected
+                      item; each SelectItem needs its list `index`. */}
+                  <Select value={connections} onValueChange={setConnections}>
+                    {/* The trigger ships with min-w-[160px]; a phone half-column is ~150px. */}
+                    <SelectTrigger id="connections" placeholder="Conexões" className="w-full min-w-0" />
+                    <SelectContent>
+                      {CONNECTION_OPTIONS.map(([value, label], index) => (
+                        <SelectItem key={value} index={index} value={value}>
+                          {label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
               <div className="space-y-1.5">
-                <Label htmlFor="flight">Voo ofertado</Label>
+                <Label htmlFor="flight">Voo(s)</Label>
                 <Input
                   id="flight"
-                  placeholder="G3-1720 · 10/09 08:15"
+                  placeholder="G3-1720 / G3-1450"
                   value={flightInfo}
                   onChange={(e) => setFlightInfo(e.target.value)}
                   required
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="notes">Observações (bagagem, conexões…)</Label>
+                <Label htmlFor="departsAt">Saída (horário de Boa Vista)</Label>
+                <Input
+                  id="departsAt"
+                  type="datetime-local"
+                  value={departsValue}
+                  onChange={(e) => setDepartsAt(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="duration">Duração total da viagem</Label>
+                <Input
+                  id="duration"
+                  placeholder="5:40"
+                  inputMode="numeric"
+                  value={duration}
+                  onChange={(e) => setDuration(e.target.value)}
+                  className="max-w-[10rem]"
+                  required
+                />
+                <p className="text-xs text-muted-foreground">
+                  {parseDuration(duration) !== null
+                    ? `= ${fmtDuration(parseDuration(duration)!)}, da saída à chegada, contando conexões`
+                    : 'horas:minutos, da saída à chegada, contando conexões'}
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="notes">Observações (bagagem, tarifa…)</Label>
                 <Textarea id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
               </div>
               <Button type="submit" className="w-full md:w-auto" loading={pending} disabled={pending}>
@@ -308,6 +445,7 @@ export function SupplierQuotationPage() {
                   onChange={(e) => setTicketFile(e.target.files?.[0] ?? null)}
                   required
                 />
+                <p className="text-xs text-muted-foreground">Até 10 MB.</p>
               </div>
               <Button
                 type="submit"

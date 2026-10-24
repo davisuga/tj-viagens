@@ -27,6 +27,10 @@ pub struct QuotationRow {
     pub ticket_deadline_at: Option<DateTime<Utc>>,
     pub created_by: Uuid,
     pub created_at: DateTime<Utc>,
+    pub sei_process: Option<String>,
+    pub award_reason: Option<String>,
+    /// Who was eligible when the award was decided (see award.rs).
+    pub award_snapshot: Option<Value>,
 }
 
 #[derive(sqlx::FromRow, Clone)]
@@ -38,6 +42,11 @@ pub struct ProposalRow {
     pub flight_info: String,
     pub notes: Option<String>,
     pub submitted_at: DateTime<Utc>,
+    // Structured itinerary; None on bids recorded before it existed.
+    pub airline: Option<String>,
+    pub departs_at: Option<DateTime<Utc>>,
+    pub duration_minutes: Option<i32>,
+    pub connections: Option<i32>,
 }
 
 /// R4: server clock decides. OPEN past closes_at behaves as CLOSED.
@@ -88,7 +97,9 @@ fn passenger(q: &QuotationRow) -> Value {
 fn proposal_json(p: &ProposalRow) -> Value {
     json!({
         "id": p.id, "supplierId": p.supplier_id, "totalPriceCents": p.total_price_cents,
-        "flightInfo": p.flight_info, "notes": p.notes, "submittedAt": p.submitted_at.to_rfc3339()
+        "flightInfo": p.flight_info, "notes": p.notes, "submittedAt": p.submitted_at.to_rfc3339(),
+        "airline": p.airline, "departsAt": iso(p.departs_at),
+        "durationMinutes": p.duration_minutes, "connections": p.connections
     })
 }
 
@@ -98,10 +109,13 @@ pub fn staff_view(q: &QuotationRow, proposals: &[ProposalRow], now: DateTime<Utc
     let mut view = base(q, status, now);
     let obj = view.as_object_mut().expect("base is object");
     obj.insert("passenger".into(), passenger(q));
+    // Internal process reference: staff only, never in the supplier view.
+    obj.insert("seiProcess".into(), json!(q.sei_process));
     obj.insert("referencePriceCents".into(), json!(q.reference_price_cents));
     obj.insert("awardedProposalId".into(), json!(q.awarded_proposal_id));
     obj.insert("awardedAt".into(), iso(q.awarded_at));
     obj.insert("awardJustification".into(), json!(q.award_justification));
+    obj.insert("awardReason".into(), json!(q.award_reason));
     obj.insert("ticketDeadlineAt".into(), iso(q.ticket_deadline_at));
     let proposals_value = match status {
         QuotationStatus::Open => json!({ "count": proposals.len() }),

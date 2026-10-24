@@ -11,8 +11,28 @@ import {
 } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { api } from '@/lib/api';
+import { docIssue } from '@/lib/domain';
 import { errorMessage } from '@/lib/errors';
-import type { SupplierInfo, SupplierListItem } from '@/lib/types';
+import type { ChecklistInfo, SupplierInfo, SupplierListItem } from '@/lib/types';
+
+/** Certidões as of today: a credenciado supplier with a lapsed one stays in the
+ *  list but cannot be awarded until it renews. */
+function CertidoesCell({ checklist }: { checklist: ChecklistInfo }) {
+  const issues = checklist.docs.flatMap((d) => {
+    const issue = docIssue(d);
+    return issue ? [issue] : [];
+  });
+  if (issues.length === 0) return <span className="text-emerald-700">✔ em dia</span>;
+  return (
+    <div className="space-y-0.5">
+      {issues.map((i) => (
+        <p key={i.text} className={i.level === 'block' ? 'text-red-700' : 'text-amber-700'}>
+          {i.level === 'block' ? '✘' : '⚠'} {i.text}
+        </p>
+      ))}
+    </div>
+  );
+}
 
 // Fluid Functionalism Button has no "destructive" variant (primary/secondary/
 // tertiary/ghost). Its fill is painted by an internal absolutely-positioned
@@ -86,7 +106,7 @@ export function StaffSuppliers() {
           <CardTitle>Credenciamento de fornecedores</CardTitle>
           <p className="text-sm text-muted-foreground">
             A pré-triagem do checklist é automática e determinística; a homologação é decisão do
-            servidor.
+            servidor. Certidão vencida não descredencia, mas impede a adjudicação até ser renovada.
           </p>
         </CardHeader>
         <CardContent>
@@ -95,7 +115,7 @@ export function StaffSuppliers() {
               <TableRow>
                 <TableHead>Razão social</TableHead>
                 <TableHead>CNPJ</TableHead>
-                <TableHead>Checklist</TableHead>
+                <TableHead>Certidões</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead />
               </TableRow>
@@ -106,9 +126,7 @@ export function StaffSuppliers() {
                   <TableCell>{supplier.legalName}</TableCell>
                   <TableCell>{supplier.cnpj}</TableCell>
                   <TableCell className="text-sm">
-                    {checklist.ok
-                      ? '✔ completo'
-                      : `✖ ${[...checklist.missing.map((m) => `${m} pendente`), ...checklist.expired.map((x) => `${x} vencido`)].join(', ')}`}
+                    <CertidoesCell checklist={checklist} />
                   </TableCell>
                   <TableCell>
                     <StatusBadge status={supplier.status} />

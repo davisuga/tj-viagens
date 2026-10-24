@@ -1,8 +1,12 @@
+pub mod award;
 pub mod brl;
 pub mod checklist;
 pub mod cnpj;
 pub mod cpf;
+pub mod decision;
 pub mod divergence;
 pub mod economy;
+pub mod itinerary;
+pub mod sei;
 pub mod timefmt;
 pub mod types;
