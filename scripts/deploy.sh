@@ -18,6 +18,9 @@ SSH_SOCK=${SSH_SOCK:-/tmp/tjv-cm}
 DOKPLOY_URL=${DOKPLOY_URL:-http://127.0.0.1:3000}
 COMPOSE_ID=${COMPOSE_ID:-2DPIBYWl70kZNLTt3qwEb}
 HOST=${HOST:-sh-tjviagens-74-208-159-201.sslip.io}
+# Dokploy's appName: the prefix of the stack's container names.
+APP_NAME=${APP_NAME:-tjviagens-soxeyp}
+WAIT_TRIES=${WAIT_TRIES:-50}
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 TAG=$(git -C "$ROOT" rev-parse --short HEAD)
@@ -58,13 +61,19 @@ curl -fsS -X POST "$DOKPLOY_URL/api/compose.deploy" \
   -d "{\"composeId\":\"$COMPOSE_ID\"}"
 echo
 
-echo "==> waiting for health"
-for _ in $(seq 1 40); do
-  if curl -fsS --max-time 5 "https://$HOST/api/health" >/dev/null 2>&1; then
-    echo "live: https://$HOST"
+# compose.deploy only queues the job, and the OLD containers keep answering
+# /health until Dokploy swaps them — polling health alone reported "live" for a
+# stack still on the previous tag. Wait for api and web on THIS tag, healthy.
+echo "==> waiting for api and web on $TAG"
+for _ in $(seq 1 "$WAIT_TRIES"); do
+  on_tag=$($SSH "docker ps --filter name=$APP_NAME --format '{{.Image}} {{.Status}}'" \
+    | grep -cE "^tj-viagens-(api|web):$TAG Up .*\(healthy\)" || true)
+  if [ "$on_tag" -eq 2 ] && curl -fsS --max-time 5 "https://$HOST/api/health" >/dev/null 2>&1; then
+    echo "live on $TAG: https://$HOST"
     exit 0
   fi
   sleep 6
 done
-echo "timed out waiting for https://$HOST/api/health" >&2
+echo "timed out: api and web not both healthy on $TAG" >&2
+$SSH "docker ps --filter name=$APP_NAME --format '{{.Names}} {{.Image}} {{.Status}}'" >&2
 exit 1
